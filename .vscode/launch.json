@@ -1,0 +1,22 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug LSM server",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/lsm engine/lsm_server_cpp20.exe",
+      "cwd": "${workspaceFolder}/lsm engine",
+      "preLaunchTask": "Build LSM server (C++20)",
+      "MIMode": "gdb",
+      "miDebuggerPath": "C:/msys64/ucrt64/bin/gdb.exe",
+      "stopAtEntry": false,
+      "externalConsole": false,
+      "environment": [
+        { "name": "PATH", "value": "C:/msys64/ucrt64/bin;C:/msys64/usr/bin;${env:PATH}" },
+        { "name": "LSM_PORT", "value": "8080" },
+        { "name": "LSM_DATA_DIR", "value": "${workspaceFolder}/lsm engine/data" }
+      ]
+    }
+  ]
+}
