@@ -33,7 +33,7 @@ if (Test-Path -LiteralPath $rootEnv) {
 }
 $previousErrorAction = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
-$diagnostics = & $compiler.FullName -std=c++20 -O2 -static -static-libgcc -static-libstdc++ (Join-Path $PSScriptRoot 'src/main.cpp') -I (Join-Path $PSScriptRoot 'include') -lws2_32 -lbcrypt -o $output 2>&1
+$diagnostics = & $compiler.FullName -std=c++20 -O2 -static -static-libgcc -static-libstdc++ (Join-Path $PSScriptRoot 'main.cpp') -I (Join-Path $PSScriptRoot 'include') -lws2_32 -lbcrypt -o $output 2>&1
 $compileExitCode = $LASTEXITCODE
 $ErrorActionPreference = $previousErrorAction
 if ($diagnostics) { $diagnostics | ForEach-Object { Write-Host $_ } }

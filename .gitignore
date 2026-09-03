@@ -4,4 +4,4 @@ lsm engine/data/
 lsm engine/test-data/
 lsm engine/*.exe
 *.env
-!*.env.example
+*.env.example

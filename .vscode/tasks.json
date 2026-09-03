@@ -11,7 +11,7 @@
                 "-static",
                 "-static-libgcc",
                 "-static-libstdc++",
-                "${workspaceFolder}/lsm engine/src/main.cpp",
+                "${workspaceFolder}/lsm engine/main.cpp",
                 "-I",
                 "${workspaceFolder}/lsm engine/include",
                 "-lws2_32",
