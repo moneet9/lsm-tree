@@ -3,7 +3,7 @@ project(lsm_engine LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-add_executable(lsm_server src/main.cpp)
+add_executable(lsm_server src/main.cpp src/engine.cpp src/memtable.cpp src/wal.cpp src/sstable.cpp src/http_server.cpp src/workload.cpp)
 target_include_directories(lsm_server PRIVATE include)
 if (WIN32)
   target_link_libraries(lsm_server PRIVATE ws2_32 bcrypt)

@@ -1,7 +1,28 @@
-version: "3.8"
-
 services:
+  backend:
+    build:
+      context: ./lsm engine
+    environment:
+      LSM_PORT: 8080
+      LSM_DATA_DIR: /data
+    ports:
+      - "8080:8080"
+    volumes:
+      - lsm_data:/data
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+    restart: unless-stopped
+
+  # Optional S3 compatibility demo. Local files are the default path.
   minio:
+    profiles: ["s3"]
     image: minio/minio:latest
     container_name: local-s3
     restart: unless-stopped
@@ -21,6 +42,7 @@ services:
       - minio_data:/data
 
   minio-init:
+    profiles: ["s3"]
     image: minio/mc:latest
     depends_on:
       - minio
@@ -36,4 +58,5 @@ services:
     restart: "no"
 
 volumes:
+  lsm_data:
   minio_data:

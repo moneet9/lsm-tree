@@ -40,6 +40,7 @@ const nav = [
   ["/", "Overview", Gauge],
   ["/workload", "Workload lab", Activity],
   ["/crud", "CRUD lab", Terminal],
+  ["/memtable", "MemTable", Database],
   ["/wal", "WAL records", Archive],
   ["/search", "Read pipeline", Search],
   ["/sstables", "SSTables", Layers3],
@@ -65,6 +66,14 @@ const empty = {
   storage: "offline",
   memtablePreview: [],
   sstableFiles: [],
+  memtableType: "ordered skip list",
+  skiplistLevels: 4,
+  memtableBytes: 0,
+  sstableReadOps: 0,
+  bloomRejects: 0,
+  cacheHits: 0,
+  pendingRequests: 0,
+  activeRequests: 0,
 };
 function useRoute() {
   const [p, setP] = useState(location.hash.slice(1) || "/");
@@ -109,9 +118,9 @@ function App() {
     [s, setS] = useState(empty),
     [online, setOnline] = useState(false);
   const refresh = () =>
-    api("/api/status")
-      .then((x) => {
-        setS({ ...empty, ...x });
+    Promise.all([api("/api/status"), api("/api/metrics")])
+      .then(([status, metrics]) => {
+        setS({ ...empty, ...status, ...metrics });
         setOnline(true);
       })
       .catch(() => setOnline(false));
@@ -125,10 +134,12 @@ function App() {
       <Workload status={s} refresh={refresh} />
     ) : path === "/crud" ? (
       <Crud refresh={refresh} />
+    ) : path === "/memtable" ? (
+      <Memtable status={s} />
     ) : path === "/wal" ? (
       <Wal />
     ) : path === "/search" ? (
-      <SearchLab />
+      <SearchLab status={s} />
     ) : path === "/sstables" ? (
       <Sstables />
     ) : path === "/compaction" ? (
@@ -174,7 +185,7 @@ function App() {
           <i className={online ? "on" : ""} />
           <div>
             <b>{online ? "Engine connected" : "Backend offline"}</b>
-            <small>{online ? "MinIO/S3 ready" : "Start C++ backend"}</small>
+            <small>{online ? "Local files ready" : "Start C++ backend"}</small>
           </div>
         </div>
       </aside>
@@ -188,7 +199,7 @@ function App() {
           </div>
           <div className="top-actions">
             <span className="bucket">
-              <HardDrive size={14} /> {s.bucket || "S3 bucket"}
+              <HardDrive size={14} /> Local object store
             </span>
             <span className={online ? "status" : "status offline"}>
               <i /> {online ? "ONLINE" : "OFFLINE"}
@@ -219,12 +230,12 @@ function EngineMap({ status: s }) {
     ["03", "MemTable", "sorted skip list"],
     ["04", "Flush", "freeze + sort"],
     ["05", "SSTable", "blocks + index"],
-    ["06", "Object store", "S3 manifest"],
+    ["06", "Object store", "local manifest"],
   ];
   const read = [
     ["01", "Client", "GET /user:42"],
-    ["02", "Block cache", `${s.readHitRate ? Math.round(s.readHitRate * 100) : 94}% hit rate`],
-    ["03", "Bloom filter", "maybe present?"],
+    ["02", "Block cache", `${s.cacheHits ? fmt(s.cacheHits) + " hits" : "no cache hits"}`],
+    ["03", "Bloom filter", `${fmt(s.bloomRejects)} actual rejects`],
     ["04", "Sparse index", "seek block"],
     ["05", "Data block", "decompress"],
     ["06", "Value", "return latest"],
@@ -265,7 +276,7 @@ function ConceptBoard({ status: s, go }) {
     ["02", "MemTable + flush", "Sorted mutable state becomes an immutable L0 table at the flush boundary.", fmt(s.memtableKeys) + " live keys", Database, "/crud", "Write a record"],
     ["03", "Bloom + block cache", "Probabilistic filtering avoids I/O; cache keeps hot blocks in memory.", (s.readHitRate * 100).toFixed(1) + "% hit rate", Search, "/search", "Trace a read"],
     ["04", "Compaction + tombstones", "Sorted runs merge, obsolete versions disappear, and deletes become durable markers.", fmt(s.tombstones) + " tombstones", Boxes, "/compaction", "Run a merge"],
-    ["05", "SSTables + S3", "Immutable files carry data blocks, sparse indexes, Bloom filters, and a cloud manifest.", fmt(s.sstables) + " local files", HardDrive, "/sstables", "Inspect files"],
+    ["05", "SSTables + local mirror", "Immutable files carry data blocks, sparse indexes, Bloom filters, and a local object mirror.", fmt(s.sstables) + " local files", HardDrive, "/sstables", "Inspect files"],
     ["06", "Amplification trade-offs", "Write, read, and space costs reveal why LSM engines tune buffers and levels.", s.writeAmplification.toFixed(2) + "× write amp", Activity, "/settings", "Tune parameters"],
   ];
   return <Card className="concept-board"><div className="board-title"><div><span className="eyebrow">PROFESSOR BRIEFING</span><h2>Six ideas, one storage engine</h2><p>Use the board as a guided tour, then open each experiment for live evidence.</p></div><span className="board-status"><i /> LIVE ENGINE MODEL</span></div><div className="concept-grid">{concepts.map(([n,title,desc,metric,Icon,route,action]) => <div className="concept-card" key={title}><div className="concept-top"><span>{n}</span><Icon size={17} /></div><h3>{title}</h3><p>{desc}</p><strong>{metric}</strong><button onClick={() => go(route)}>{action}<ChevronRight size={14} /></button></div>)}</div></Card>;
@@ -371,6 +382,25 @@ function Dashboard({ status: s, go }) {
             />
             <Metric n="Compaction bytes" v={fmt(s.compactionBytes) + " B"} />
             <Metric n="Read operations" v={fmt(s.readOps)} />
+          </div>
+        </Card>
+        <Card>
+          <Head title="MemTable index" sub="ordered in-memory index, live from C++" />
+          <div className="analytics">
+            <Metric n="Implementation" v={s.memtableType} />
+            <Metric n="Levels" v={s.skiplistLevels} />
+            <Metric n="Memory" v={fmt(s.memtableBytes) + " B"} />
+            <Metric n="Active requests" v={fmt(s.activeRequests)} />
+            <Metric n="Queued requests" v={fmt(s.pendingRequests)} />
+          </div>
+          <div className="skiplist-visual">
+            {Array.from({ length: s.skiplistLevels || 4 }, (_, level) => (
+              <div className="skiplist-level" key={level}>
+                <b>L{level}</b>
+                <span />
+                <i>{level === 0 ? `${fmt(s.memtableKeys)} ordered keys` : `${Math.max(1, Math.ceil(s.memtableKeys / (level + 1)))} index links`}</i>
+              </div>
+            ))}
           </div>
         </Card>
       </div>
@@ -660,6 +690,36 @@ function Crud({ refresh }) {
     </>
   );
 }
+function Memtable({ status: s }) {
+  return (
+    <>
+      <Title eyebrow="REAL VOLATILE STATE" title="MemTable inspector" desc="Inspect the live ordered skip list before it is flushed into an SSTable." />
+      <div className="kpis">
+        <Kpi icon={Database} label="ORDERED KEYS" value={fmt(s.memtableKeys)} />
+        <Kpi icon={HardDrive} label="MEMORY BYTES" value={fmt(s.memtableBytes) + " B"} color="cyan" />
+        <Kpi icon={Activity} label="SKIP LIST LEVELS" value={s.skiplistLevels} color="orange" />
+        <Kpi icon={Trash2} label="TOMBSTONES" value={fmt(s.tombstones)} color="purple" />
+      </div>
+      <div className="lab-grid">
+        <Card>
+          <Head title="Current entries" sub="ordered by key · tombstones remain visible" />
+          <DataTable rows={s.memtablePreview} empty="MemTable is empty. Add a record or run a workload." />
+        </Card>
+        <Card>
+          <Head title="Skip-list structure" sub="live levels reported by the C++ engine" />
+          <div className="skiplist-visual">
+            {Array.from({ length: s.skiplistLevels || 1 }, (_, level) => (
+              <div className="skiplist-level" key={level}>
+                <b>L{level}</b><span /><i>{level === 0 ? `${fmt(s.memtableKeys)} entries` : "express links"}</i>
+              </div>
+            ))}
+          </div>
+          <p className="result">Flush occurs when the configured MemTable limit is reached. The WAL is retained until the SSTable is published successfully.</p>
+        </Card>
+      </div>
+    </>
+  );
+}
 function Wal() {
   const [rows, setRows] = useState([]);
   useEffect(() => {
@@ -727,7 +787,7 @@ function Sstables() {
       <Title
         eyebrow="REAL IMMUTABLE FILES"
         title="SSTable explorer"
-        desc="Metadata extracted from actual table files on disk and mirrored to S3."
+        desc="Metadata extracted from actual binary table files and their local object mirror."
       />
       <div className="sstable-grid">
         {files.map((f) => (
@@ -767,7 +827,7 @@ function Sstables() {
     </>
   );
 }
-function SearchLab() {
+function SearchLab({ status: s }) {
   const [q, setQ] = useState("hello"),
     [out, setOut] = useState(null);
   const run = () =>
@@ -803,7 +863,14 @@ function SearchLab() {
               <span>0{i + 1}</span>
               <b>{x}</b>
               <small>
-                {i === 1 ? "actual engine lookup" : "ready for backend adapter"}
+                {[
+                  "query enters the engine",
+                  "mutable state checked first",
+                  "Bloom filter rejects impossible files",
+                  "sparse index seeks a 16-row window",
+                  "LRU cache avoids repeated reads",
+                  "newest version wins",
+                ][i]}
               </small>
             </div>
           ))}
@@ -819,9 +886,9 @@ function SearchLab() {
         )}
         {out && !out.error && (
           <div className="read-inspector">
-            <div><span>MEMTABLE</span><b>{out.found ? "checked" : "miss"}</b><small>mutable first</small></div>
-            <div><span>BLOOM FILTER</span><b>{out.found ? "maybe" : "negative"}</b><small>{out.found ? "continue search" : "skip file"}</small></div>
-            <div><span>BLOCK CACHE</span><b>{out.found ? "hit / fill" : "no read"}</b><small>4 KB target block</small></div>
+            <div><span>MEMTABLE</span><b>{out.found ? "checked" : "miss"}</b><small>{s.memtableType} · first</small></div>
+            <div><span>BLOOM FILTER</span><b>{s.bloomRejects} rejects</b><small>actual file exclusions</small></div>
+            <div><span>SPARSE INDEX / DISK</span><b>{s.sstableReadOps} reads</b><small>actual SSTable reads</small></div>
             <div><span>VERSION RULE</span><b>{out.found ? "latest seq" : "absent"}</b><small>tombstones win</small></div>
           </div>
         )}
@@ -860,7 +927,7 @@ function Compaction({ refresh }) {
       <Card className="compact-card">
         <Head
           title="L0 → L1 merge"
-          sub="the operation creates a real .sst file and updates the S3 manifest"
+          sub="the operation creates immutable files and updates the local manifest"
         />
         <div className="merge-flow">
           <div>
@@ -922,7 +989,7 @@ function Settings() {
       <Title
         eyebrow="LIVE ENGINE CONFIGURATION"
         title="Parameters"
-        desc="Tune the actual LSM tree. S3 credentials stay in your local .env file."
+        desc="Tune the actual local-file LSM tree."
       />
       <div className="settings-columns">
         <Card>

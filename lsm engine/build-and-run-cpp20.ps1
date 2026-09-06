@@ -25,19 +25,23 @@ New-Item -ItemType Directory -Force -Path $temp | Out-Null
 $env:TEMP = $temp
 $env:TMP = $temp
 $env:TMPDIR = $temp
+$env:LSM_DATA_DIR = Join-Path $PSScriptRoot 'data'
 $rootEnv = Join-Path $PSScriptRoot '..\.env'
 if (Test-Path -LiteralPath $rootEnv) {
   Get-Content -LiteralPath $rootEnv | ForEach-Object {
     if ($_ -match '^\s*([^#=][^=]*)=(.*)$') { [Environment]::SetEnvironmentVariable($matches[1].Trim(), $matches[2].Trim(), 'Process') }
   }
 }
+$env:LSM_DATA_DIR = Join-Path $PSScriptRoot 'data'
 $previousErrorAction = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
-$diagnostics = & $compiler.FullName -std=c++20 -O2 -static -static-libgcc -static-libstdc++ (Join-Path $PSScriptRoot 'main.cpp') -I (Join-Path $PSScriptRoot 'include') -lws2_32 -lbcrypt -o $output 2>&1
+$sources = @('src/main.cpp','src/engine.cpp','src/memtable.cpp','src/wal.cpp','src/sstable.cpp','src/http_server.cpp','src/workload.cpp') | ForEach-Object { Join-Path $PSScriptRoot $_ }
+$diagnostics = & $compiler.FullName -std=c++20 -O2 -static -static-libgcc -static-libstdc++ $sources -I (Join-Path $PSScriptRoot 'include') -lws2_32 -lbcrypt -o $output 2>&1
 $compileExitCode = $LASTEXITCODE
 $ErrorActionPreference = $previousErrorAction
 if ($diagnostics) { $diagnostics | ForEach-Object { Write-Host $_ } }
 if ($compileExitCode -ne 0) { throw "C++20 compilation failed with exit code $compileExitCode. The old server was not started." }
+if (-not (Test-Path -LiteralPath $output)) { throw "C++20 compilation completed without producing $output." }
 
 Write-Host "Starting C++20 LSM backend at http://127.0.0.1:8080"
 & $output

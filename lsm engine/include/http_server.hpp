@@ -1,2 +1,3 @@
 #pragma once
-// HTTP module boundary: REST endpoints exposed by the C++ backend.
+#include "engine.hpp"
+void runHttpServer(Engine& engine, int port);
