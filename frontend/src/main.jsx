@@ -23,7 +23,6 @@ import {
   Zap,
 } from "lucide-react";
 import "./style.css";
-import "./light.css";
 import "./lab.css";
 import "./visual.css";
 import "./professor.css";
@@ -38,7 +37,7 @@ const api = async (path, options = {}) => {
 };
 const nav = [
   ["/", "Overview", Gauge],
-  ["/workload", "Workload lab", Activity],
+  ["/workload", "Live simulation", Activity],
   ["/crud", "CRUD lab", Terminal],
   ["/memtable", "MemTable", Database],
   ["/wal", "WAL records", Archive],
@@ -149,7 +148,7 @@ function App() {
     ) : path === "/settings" ? (
       <Settings />
     ) : (
-      <Dashboard status={s} go={go} />
+      <Dashboard status={s} go={go} refresh={refresh} />
     );
   return (
     <div className="app">
@@ -211,7 +210,6 @@ function App() {
         </header>
         <div className="page">
           {page}
-          <LearningStrip />
         </div>
         <footer>
           <Wifi size={13} />{" "}
@@ -298,6 +296,7 @@ function LearningStrip() {
           ["03", "MemTable", "mutable"],
           ["04", "Flush", "sorted"],
           ["05", "L0 SSTable", "immutable"],
+
           ["06", "Compaction", "merge"],
         ].map(([n, t, sub], i) => (
           <React.Fragment key={n}>
@@ -313,137 +312,16 @@ function LearningStrip() {
     </Card>
   );
 }
-function Dashboard({ status: s, go }) {
-  return (
-    <>
-      <Title
-        eyebrow="REAL ENGINE STATE"
-        title="LSM virtual lab"
-        desc="Every number below comes from the running C++ engine."
-        action={
-          <button className="primary" onClick={() => go("/workload")}>
-            <Play size={15} /> Generate real data
-          </button>
-        }
-      />
-      <EngineMap status={s} />
-      <ConceptBoard status={s} go={go} />
-      <div className="kpis">
-        <Kpi
-          icon={Database}
-          label="MEMTABLE KEYS"
-          value={fmt(s.memtableKeys)}
-        />
-        <Kpi
-          icon={Archive}
-          label="WAL RECORDS"
-          value={fmt(s.walRecords)}
-          color="cyan"
-        />
-        <Kpi
-          icon={Layers3}
-          label="SSTABLE FILES"
-          value={s.sstables}
-          color="purple"
-        />
-        <Kpi
-          icon={Activity}
-          label="READ HIT RATE"
-          value={(s.readHitRate * 100).toFixed(1) + "%"}
-          color="orange"
-        />
-      </div>
-      <div className="lab-grid">
-        <Card>
-          <Head
-            title="MemTable · mutable memory"
-            sub="current key state before flush"
-          />
-          <DataTable
-            rows={s.memtablePreview}
-            empty="No records yet. Use CRUD or Workload lab."
-          />
-        </Card>
-        <Card>
-          <Head
-            title="Engine analytics"
-            sub="calculated from actual operations"
-          />
-          <div className="analytics">
-            <Metric n="Tombstones" v={s.tombstones} />
-            <Metric n="WAL size" v={fmt(s.walBytes) + " B"} />
-            <Metric
-              n="Write amplification"
-              v={s.writeAmplification.toFixed(2) + "×"}
-            />
-            <Metric
-              n="Space amplification"
-              v={s.spaceAmplification.toFixed(2) + "×"}
-            />
-            <Metric n="Compaction bytes" v={fmt(s.compactionBytes) + " B"} />
-            <Metric n="Read operations" v={fmt(s.readOps)} />
-          </div>
-        </Card>
-        <Card>
-          <Head title="MemTable index" sub="ordered in-memory index, live from C++" />
-          <div className="analytics">
-            <Metric n="Implementation" v={s.memtableType} />
-            <Metric n="Levels" v={s.skiplistLevels} />
-            <Metric n="Memory" v={fmt(s.memtableBytes) + " B"} />
-            <Metric n="Active requests" v={fmt(s.activeRequests)} />
-            <Metric n="Queued requests" v={fmt(s.pendingRequests)} />
-          </div>
-          <div className="skiplist-visual">
-            {Array.from({ length: s.skiplistLevels || 4 }, (_, level) => (
-              <div className="skiplist-level" key={level}>
-                <b>L{level}</b>
-                <span />
-                <i>{level === 0 ? `${fmt(s.memtableKeys)} ordered keys` : `${Math.max(1, Math.ceil(s.memtableKeys / (level + 1)))} index links`}</i>
-              </div>
-            ))}
-          </div>
-        </Card>
-      </div>
-      <Card className="tree-card">
-        <Head
-          title="LSM levels"
-          sub="MemTable → flush → immutable SSTables → compaction"
-        />
-        <div className="visual-tree">
-          <div className="tree-node active">
-            <b>MemTable</b>
-            <span>{s.memtableKeys} keys</span>
-          </div>
-          <div className="arrow">↓ flush</div>
-          {[
-            [
-              "L0",
-              s.sstableFiles?.filter((x) => x.name?.startsWith("table-"))
-                .length || 0,
-            ],
-            ["L1", 0],
-            ["L2", 0],
-          ].map(([l, n]) => (
-            <React.Fragment key={l}>
-              <div className="tree-level">
-                <strong>{l}</strong>
-                <span>{n} file(s)</span>
-                <div>
-                  {s.sstableFiles
-                    ?.filter((x) => x.name?.startsWith("table-"))
-                    .slice(l === "L0" ? 0 : 0, l === "L0" ? 6 : 0)
-                    .map((x) => (
-                      <code key={x.name}>{x.name}</code>
-                    ))}
-                </div>
-              </div>
-              {l !== "L2" && <div className="arrow">↓ compact</div>}
-            </React.Fragment>
-          ))}
-        </div>
-      </Card>
-    </>
-  );
+function Dashboard({ status: s, go, refresh }) {
+  const [clearing, setClearing] = useState(false), [clearMessage, setClearMessage] = useState("");
+  const clearAll = async () => { if (!window.confirm("Delete all MemTable, WAL, SSTable, object-store, cache, and metric data? This cannot be undone.")) return; setClearing(true); try { await api("/api/clear-all", { method: "POST" }); setClearMessage("All engine data cleared."); await refresh(); } catch (e) { setClearMessage("Clear failed: " + e.message); } finally { setClearing(false); } };
+  return (<>
+    <Title eyebrow="SYSTEM ANALYTICS" title="LSM engine overview" desc="Read-only health and performance analytics from the running storage engine." action={<div className="overview-actions"><button className="primary" onClick={() => go("/workload")}><Activity size={15}/> Open live simulation</button><button className="danger" disabled={clearing} onClick={clearAll}><Trash2 size={15}/> {clearing ? "Clearing…" : "Delete all data"}</button></div>} />
+    <Card className="danger-zone"><b>Danger zone</b><span>Deletes all current MemTable records, WAL entries, SSTables, object-store copies, cache contents, and performance counters.</span>{clearMessage && <em>{clearMessage}</em>}</Card>
+    <div className="kpis"><Kpi icon={Database} label="MEMTABLE SIZE" value={fmt(s.memtableBytes)+" B"}/><Kpi icon={Archive} label="WAL SIZE" value={fmt(s.walBytes)+" B"} color="cyan"/><Kpi icon={Layers3} label="SSTABLE COUNT" value={fmt(s.sstables)} color="purple"/><Kpi icon={Search} label="CACHE HIT RATE" value={s.readOps ? ((s.cacheHits/s.readOps)*100).toFixed(1)+"%" : "0%"} color="orange"/></div>
+    <div className="performance-grid"><Card><Head title="Write performance" sub="backend measurements"/><div className="telemetry"><Metric n="Throughput" v={fmt(Math.round(s.writeThroughput || 0))+" ops/s"}/><Metric n="Average latency" v={fmt(Math.round(s.avgWriteLatencyUs || 0))+" µs"}/><Metric n="P50" v={fmt(s.writeP50Us || 0)+" µs"}/><Metric n="P90" v={fmt(s.writeP90Us || 0)+" µs"}/><Metric n="P99" v={fmt(s.writeP99Us || 0)+" µs"}/></div></Card><Card><Head title="Read and storage performance" sub="cache, Bloom, SSTable, and object-store counters"/><div className="telemetry"><Metric n="Read throughput" v={fmt(Math.round(s.readThroughput || 0))+" ops/s"}/><Metric n="Read P99" v={fmt(s.readP99Us || 0)+" µs"}/><Metric n="Cache misses" v={fmt(s.cacheMisses || s.readMisses)}/><Metric n="Bloom rejects" v={fmt(s.bloomRejects)}/><Metric n="S3/SSTable reads" v={fmt(s.s3ReadCount || s.sstableReadOps)}/><Metric n="Storage usage" v={fmt(s.storageUsageBytes)+" B"}/></div></Card></div>
+    <div className="lab-grid"><Card><Head title="LSM state" sub="current durable and mutable structures"/><div className="analytics"><Metric n="MemTable keys" v={fmt(s.memtableKeys)}/><Metric n="Skip-list levels" v={s.skiplistLevels}/><Metric n="Flushes" v={fmt(s.flushCount)}/><Metric n="Compactions" v={fmt(s.compactionCount)}/><Metric n="Tombstones" v={fmt(s.tombstones)}/><Metric n="Active requests" v={fmt(s.activeRequests)}/></div></Card><Card><Head title="Current MemTable" sub="latest in-memory records"/><DataTable rows={s.memtablePreview} empty="No live records yet. Start a simulation or use CRUD."/></Card></div>
+  </>);
 }
 function Head({ title, sub }) {
   return (
@@ -485,128 +363,21 @@ function DataTable({ rows, empty }) {
     <p className="empty">{empty}</p>
   );
 }
+const simulationDefaults = { speed: 100, payloadBytes: 256, keySpace: 1000, readRatio: 20, deleteRatio: 10, temperatureEnabled: true, temperatureRate: 1, humidityEnabled: true, humidityRate: 1, airQualityEnabled: true, airQualityRate: 1, noiseEnabled: true, noiseRate: 5, trafficCountEnabled: true, trafficCountRate: 10, parkingOccupancyEnabled: true, parkingOccupancyRate: 1, vibrationEnabled: true, vibrationRate: 50 };
+function readSimulationConfig() { try { return { ...simulationDefaults, ...JSON.parse(localStorage.getItem("lsm-simulation-config") || "{}") }; } catch { return simulationDefaults; } }
 function Workload({ status: s, refresh }) {
-  const [run, setRun] = useState(false),
-    [cfg, setCfg] = useState({
-      operations: 5000,
-      readRatio: 20,
-      deleteRatio: 10,
-      keySpace: 1200,
-      payloadSize: 384,
-    }),
-    [result, setResult] = useState(null);
-  const presets = {
-    "Professor demo": { operations: 12000, readRatio: 20, deleteRatio: 15, keySpace: 1800, payloadSize: 512 },
-    "Write burst": { operations: 5000, readRatio: 0, deleteRatio: 0, keySpace: 2000, payloadSize: 256 },
-    "Read pressure": { operations: 5000, readRatio: 85, deleteRatio: 0, keySpace: 500, payloadSize: 80 },
-    "Tombstone run": { operations: 3000, readRatio: 20, deleteRatio: 30, keySpace: 700, payloadSize: 120 },
-  };
-  const start = async () => {
-    if (cfg.readRatio + cfg.deleteRatio > 100) {
-      setResult({ error: "Read percentage + delete percentage must be 100 or less." });
-      return;
-    }
-    setRun(true);
-    try {
-      setResult(
-        await api("/api/simulate", {
-          method: "POST",
-          body: JSON.stringify(cfg),
-        }),
-      );
-      await refresh();
-    } catch (e) {
-      setResult({ error: e.message });
-    } finally {
-      setRun(false);
-    }
-  };
-  return (
-    <>
-      <Title
-        eyebrow="REAL WORKLOAD"
-        title="Workload lab"
-        desc="Run operations against the C++ MemTable, WAL, and SSTable engine."
-        action={
-          <button className="primary" disabled={run} onClick={start}>
-            {run ? (
-              <>
-                <RefreshCw className="spin" size={15} /> Running…
-              </>
-            ) : (
-              <>
-                <Play size={15} /> Start workload
-              </>
-            )}
-          </button>
-        }
-      />
-      <div className="work-grid">
-        <Card>
-          <Head
-            title="Workload parameters"
-            sub="these values are sent to /api/simulate"
-          />
-          <div className="preset-row">
-            {Object.entries(presets).map(([name, values]) => (
-              <button className="preset" key={name} onClick={() => setCfg(values)}>{name}</button>
-            ))}
-          </div>
-          {[
-            ["operations", "Total operations"],
-            ["readRatio", "Read percentage"],
-            ["deleteRatio", "Delete percentage"],
-            ["keySpace", "Key space"],
-            ["payloadSize", "Value bytes"],
-          ].map(([k, l]) => (
-            <label className="field" key={k}>
-              {l}
-              <input
-                type="number"
-                min={0}
-                max={k === "operations" ? 100000 : k === "payloadSize" ? 1048576 : k === "readRatio" || k === "deleteRatio" ? 100 : 100000}
-                value={cfg[k]}
-                onChange={(e) => setCfg({ ...cfg, [k]: +e.target.value })}
-              />
-            </label>
-          ))}
-          <button
-            className="ghost"
-            onClick={() =>
-              setCfg({
-                operations: 5000,
-                readRatio: 20,
-                deleteRatio: 10,
-                keySpace: 1200,
-                payloadSize: 384,
-              })
-            }
-          >
-            Reset parameters
-          </button>
-        </Card>
-        <Card>
-          <Head
-            title="Live engine reaction"
-            sub="refreshes from backend every 1.5 seconds"
-          />
-          <div className="reaction">
-            <Metric n="MemTable keys" v={s.memtableKeys} />
-            <Metric n="WAL records" v={s.walRecords} />
-            <Metric n="SSTables" v={s.sstables} />
-            <Metric n="Tombstones" v={s.tombstones} />
-          </div>
-          {result && (
-            <div className="result">
-              {result.error ||
-                `Completed ${fmt(result.operations)} operations · ${fmt(Math.round(result.throughput))} ops/sec · p99 ${Math.round(result.p99)} µs`}
-            </div>
-          )}
-        </Card>
-      </div>
-    </>
-  );
+  const [busy, setBusy] = useState(false);
+  const command = async (action) => { setBusy(true); try { await api("/api/simulation/" + action, { method: "POST", body: JSON.stringify(action === "start" ? readSimulationConfig() : {}) }); await refresh(); } finally { setBusy(false); } };
+  const hit = s.readOps ? (s.cacheHits / Math.max(1, s.readOps) * 100) : 0, miss = s.readOps ? (s.readMisses / Math.max(1, s.readOps) * 100) : 0;
+  return (<>
+    <Title eyebrow="LIVE ENGINE MONITOR" title="Live simulation" desc="Watch the configured sensor stream move through WAL, MemTable, SSTables, cache, Bloom filters, and compaction." action={<div className="live-actions"><span className={s.simulationRunning ? "live-pill" : "live-pill paused"}><i />{s.simulationRunning ? "RUNNING" : "PAUSED"}</span><button className="primary" disabled={busy} onClick={() => command(s.simulationRunning ? "stop" : "start")}>{s.simulationRunning ? <Pause size={15}/> : <Play size={15}/>} {s.simulationRunning ? "Pause stream" : "Start stream"}</button></div>} />
+    <div className="live-kpis"><Kpi icon={Zap} label="INGESTED WRITES" value={fmt(s.simulationWrites)} color="lime"/><Kpi icon={Search} label="RANDOM READS" value={fmt(s.simulationReads)} color="cyan"/><Kpi icon={Database} label="MEMTABLE KEYS" value={fmt(s.memtableKeys)} color="purple"/><Kpi icon={Layers3} label="SSTABLE FILES" value={fmt(s.sstables)} color="orange"/></div>
+    <div className="performance-grid"><Card><Head title="Write path checkpoints" sub="live backend state"/><div className="checkpoint-list"><div><b>WAL</b><span>{fmt(s.walRecords)} records · {fmt(s.walBytes)} B</span><em>durable</em></div><div><b>MemTable</b><span>{fmt(s.memtableKeys)} keys · {fmt(s.memtableBytes)} B</span><em>mutable</em></div><div><b>Flushes</b><span>{fmt(s.flushCount)} completed</span><em>checkpoint</em></div><div><b>Compaction</b><span>{fmt(s.compactionCount)} merges</span><em>sorted merge</em></div></div></Card><Card><Head title="Read path telemetry" sub="random reads exercise cache and Bloom filters"/><div className="telemetry"><Metric n="Cache hits" v={fmt(s.cacheHits)}/><Metric n="Cache misses" v={fmt(s.cacheMisses || s.readMisses)}/><Metric n="Hit rate" v={hit.toFixed(1)+"%"}/><Metric n="Bloom rejects" v={fmt(s.bloomRejects)}/><Metric n="SSTable reads" v={fmt(s.sstableReadOps)}/><Metric n="Cache entries" v={fmt(s.cacheSize)}/></div><div className="meter"><span style={{width: hit+"%"}}/><small>cache hit ratio</small></div><div className="meter miss"><span style={{width: miss+"%"}}/><small>read miss ratio</small></div></Card></div>
+    <Card className="live-tree"><Head title="Live LSM topology" sub="immutable files appear after flush and are merged during compaction"/><div className="topology"><div className="topology-node current"><small>MEMTABLE</small><b>{fmt(s.memtableKeys)}</b><span>ordered skip-list keys</span></div><div className="topology-arrow">flush →</div><div className="topology-node"><small>L0 SSTABLES</small><b>{fmt(s.sstableFiles?.filter(x => x.level === "L0").length || 0)}</b><span>immutable files</span></div><div className="topology-arrow">compact →</div><div className="topology-node"><small>OBJECT STORE</small><b>{fmt(s.sstableFiles?.length || 0)}</b><span>mirrored tables</span></div></div></Card>
+    <Card><Head title="Latest MemTable entries" sub="newest records from the running stream"/><DataTable rows={s.memtablePreview} empty="Configure the stream in Parameters, then start it here."/></Card>
+  </>);
 }
+
 function Crud({ refresh }) {
   const [tab, setTab] = useState("PUT"),
     [key, setKey] = useState("hello"),
@@ -898,6 +669,7 @@ function SearchLab({ status: s }) {
 }
 function Compaction({ refresh }) {
   const [busy, setBusy] = useState(false),
+
     [msg, setMsg] = useState("");
   const run = async () => {
     setBusy(true);
@@ -955,6 +727,7 @@ function Compaction({ refresh }) {
     </>
   );
 }
+function SimulationSettings(){const[cfg,setCfg]=useState(readSimulationConfig),[saved,setSaved]=useState(false);const change=(k,v)=>setCfg({...cfg,[k]:typeof v==="boolean"?v:Number(v)});const save=()=>{localStorage.setItem("lsm-simulation-config",JSON.stringify(cfg));setSaved(true);setTimeout(()=>setSaved(false),1600)};const sensors=[["temperature","Temperature","Weather","1/sec"],["humidity","Humidity","Environment","1/sec"],["airQuality","Air Quality (PM2.5)","Pollution","1/sec"],["noise","Noise","Traffic","5/sec"],["trafficCount","Traffic Count","Vehicles","10/sec"],["parkingOccupancy","Parking Occupancy","Smart parking","0.5/sec"],["vibration","Vibration","Bridge monitoring","50/sec"]];return <Card className="sensor-settings"><Head title="Simulation stream settings" sub="These values are sent to the backend when live simulation starts."/><div className="sensor-table"><div className="sensor-head"><span>SENSOR</span><span>REALISTIC USE</span><span>DEFAULT</span><span>RATE / SEC</span></div>{sensors.map(([k,l,u,r])=><div className="sensor-row" key={k}><label className="sensor-check"><input type="checkbox" checked={cfg[k+"Enabled"]} onChange={e=>change(k+"Enabled",e.target.checked)}/><span>{l}</span></label><span className="sensor-use">{u}</span><span className="sensor-default">{r}</span><input className="sensor-rate" type="number" min="1" max="1000" value={cfg[k+"Rate"]} onChange={e=>change(k+"Rate",e.target.value)}/></div>)}</div><div className="sim-settings-controls"><label className="field">Speed multiplier<input type="number" min="10" max="1000" value={cfg.speed} onChange={e=>change("speed",e.target.value)}/></label><label className="field">Payload bytes<input type="number" min="16" max="1048576" value={cfg.payloadBytes} onChange={e=>change("payloadBytes",e.target.value)}/></label><label className="field">Sensor key space<input type="number" min="1" max="1000000" value={cfg.keySpace} onChange={e=>change("keySpace",e.target.value)}/></label><label className="field">Random reads %<input type="number" min="0" max="100" value={cfg.readRatio} onChange={e=>change("readRatio",e.target.value)}/></label><label className="field">Deletes %<input type="number" min="0" max="100" value={cfg.deleteRatio} onChange={e=>change("deleteRatio",e.target.value)}/></label></div><button className="primary" onClick={save}>{saved?"Saved":"Save simulation settings"}</button></Card>;}
 function Settings() {
   const [c, setC] = useState({}),
     [msg, setMsg] = useState("");
@@ -991,6 +764,7 @@ function Settings() {
         title="Parameters"
         desc="Tune the actual local-file LSM tree."
       />
+      <SimulationSettings />
       <div className="settings-columns">
         <Card>
           <Head
@@ -1131,4 +905,12 @@ function Crash({ status: s, refresh }) {
     </>
   );
 }
-createRoot(document.getElementById("root")).render(<App />);
+class AppErrorBoundary extends React.Component {
+  state = { error: null };
+  static getDerivedStateFromError(error) { return { error }; }
+  render() {
+    if (this.state.error) return <main style={{ padding: 32, fontFamily: "system-ui", color: "#244" }}><h1>LSM Lab could not start</h1><p>{this.state.error.message}</p><button onClick={() => location.reload()}>Reload</button></main>;
+    return this.props.children;
+  }
+}
+createRoot(document.getElementById("root")).render(<AppErrorBoundary><App /></AppErrorBoundary>);
