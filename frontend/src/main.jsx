@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Activity,
@@ -38,6 +38,7 @@ const api = async (path, options = {}) => {
 const nav = [
   ["/", "Overview", Gauge],
   ["/workload", "Live simulation", Activity],
+  ["/sample", "Sample payload", UploadCloud],
   ["/crud", "CRUD lab", Terminal],
   ["/memtable", "MemTable", Database],
   ["/wal", "WAL records", Archive],
@@ -47,7 +48,9 @@ const nav = [
   ["/crash", "Crash simulation", ShieldAlert],
   ["/settings", "Parameters", SettingsIcon],
 ];
-const fmt = (n) => new Intl.NumberFormat().format(n || 0);
+const fmt = (n) => new Intl.NumberFormat().format(Math.round(Number(n) || 0));
+const LIVE_POLL_MS = 3000;
+const LIVE_ANIMATION_MS = 2800;
 const empty = {
   memtableKeys: 0,
   tombstones: 0,
@@ -115,22 +118,69 @@ function App() {
   const [path, go] = useRoute(),
     [side, setSide] = useState(false),
     [s, setS] = useState(empty),
-    [online, setOnline] = useState(false);
-  const refresh = () =>
-    Promise.all([api("/api/status"), api("/api/metrics")])
+    [online, setOnline] = useState(false),
+    [history, setHistory] = useState([]);
+  const displayedRef = useRef(empty);
+  const frameRef = useRef(0);
+  const requestRef = useRef(null);
+  const hasSnapshotRef = useRef(false);
+
+  const animateTo = (target) => {
+    const from = displayedRef.current;
+    cancelAnimationFrame(frameRef.current);
+
+    if (!hasSnapshotRef.current) {
+      hasSnapshotRef.current = true;
+      displayedRef.current = target;
+      setS(target);
+      return;
+    }
+
+    const startedAt = performance.now();
+    const tick = (now) => {
+      const progress = Math.min(1, (now - startedAt) / LIVE_ANIMATION_MS);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const next = { ...target };
+      Object.keys(target).forEach((key) => {
+        if (typeof from[key] === "number" && typeof target[key] === "number") {
+          next[key] = from[key] + (target[key] - from[key]) * eased;
+        }
+      });
+      displayedRef.current = next;
+      setS(next);
+      if (progress < 1) frameRef.current = requestAnimationFrame(tick);
+    };
+    frameRef.current = requestAnimationFrame(tick);
+  };
+
+  const refresh = () => {
+    if (requestRef.current) return requestRef.current;
+    requestRef.current = Promise.all([api("/api/status"), api("/api/metrics")])
       .then(([status, metrics]) => {
-        setS({ ...empty, ...status, ...metrics });
+        const snapshot = { ...empty, ...status, ...metrics };
+        animateTo(snapshot);
+        setHistory((previous) => [...previous, { time: Date.now(), writes: snapshot.writeOps || 0, reads: snapshot.readOps || 0, keys: snapshot.memtableKeys || 0, flushes: snapshot.flushCount || 0, compactions: snapshot.compactionCount || 0, cache: snapshot.cacheHits || 0 }].slice(-24));
         setOnline(true);
       })
-      .catch(() => setOnline(false));
+      .catch(() => setOnline(false))
+      .finally(() => {
+        requestRef.current = null;
+      });
+    return requestRef.current;
+  };
   useEffect(() => {
     refresh();
-    const t = setInterval(refresh, 1500);
-    return () => clearInterval(t);
+    const t = setInterval(refresh, LIVE_POLL_MS);
+    return () => {
+      clearInterval(t);
+      cancelAnimationFrame(frameRef.current);
+    };
   }, []);
   let page =
     path === "/workload" ? (
       <Workload status={s} refresh={refresh} />
+    ) : path === "/sample" ? (
+      <SamplePayload />
     ) : path === "/crud" ? (
       <Crud refresh={refresh} />
     ) : path === "/memtable" ? (
@@ -148,7 +198,7 @@ function App() {
     ) : path === "/settings" ? (
       <Settings />
     ) : (
-      <Dashboard status={s} go={go} refresh={refresh} />
+      <Dashboard status={s} history={history} go={go} refresh={refresh} />
     );
   return (
     <div className="app">
@@ -272,10 +322,10 @@ function ConceptBoard({ status: s, go }) {
   const concepts = [
     ["01", "WAL + crash recovery", "Durable append protects writes before memory can be rebuilt.", fmt(s.walRecords) + " records", Archive, "/crash", "Replay experiment"],
     ["02", "MemTable + flush", "Sorted mutable state becomes an immutable L0 table at the flush boundary.", fmt(s.memtableKeys) + " live keys", Database, "/crud", "Write a record"],
-    ["03", "Bloom + block cache", "Probabilistic filtering avoids I/O; cache keeps hot blocks in memory.", (s.readHitRate * 100).toFixed(1) + "% hit rate", Search, "/search", "Trace a read"],
+    ["03", "Bloom + block cache", "Probabilistic filtering avoids I/O; cache keeps hot blocks in memory.", Math.round(s.readHitRate * 100) + "% hit rate", Search, "/search", "Trace a read"],
     ["04", "Compaction + tombstones", "Sorted runs merge, obsolete versions disappear, and deletes become durable markers.", fmt(s.tombstones) + " tombstones", Boxes, "/compaction", "Run a merge"],
     ["05", "SSTables + local mirror", "Immutable files carry data blocks, sparse indexes, Bloom filters, and a local object mirror.", fmt(s.sstables) + " local files", HardDrive, "/sstables", "Inspect files"],
-    ["06", "Amplification trade-offs", "Write, read, and space costs reveal why LSM engines tune buffers and levels.", s.writeAmplification.toFixed(2) + "× write amp", Activity, "/settings", "Tune parameters"],
+    ["06", "Amplification trade-offs", "Write, read, and space costs reveal why LSM engines tune buffers and levels.", Math.round(s.writeAmplification || 0) + "× write amp", Activity, "/settings", "Tune parameters"],
   ];
   return <Card className="concept-board"><div className="board-title"><div><span className="eyebrow">PROFESSOR BRIEFING</span><h2>Six ideas, one storage engine</h2><p>Use the board as a guided tour, then open each experiment for live evidence.</p></div><span className="board-status"><i /> LIVE ENGINE MODEL</span></div><div className="concept-grid">{concepts.map(([n,title,desc,metric,Icon,route,action]) => <div className="concept-card" key={title}><div className="concept-top"><span>{n}</span><Icon size={17} /></div><h3>{title}</h3><p>{desc}</p><strong>{metric}</strong><button onClick={() => go(route)}>{action}<ChevronRight size={14} /></button></div>)}</div></Card>;
 }
@@ -312,15 +362,27 @@ function LearningStrip() {
     </Card>
   );
 }
-function Dashboard({ status: s, go, refresh }) {
+function LiveGraphs({ status: s, history }) {
+  const points = history.length ? history : [{ writes: s.writeOps || 0, reads: s.readOps || 0, keys: s.memtableKeys || 0, flushes: s.flushCount || 0, compactions: s.compactionCount || 0, cache: s.cacheHits || 0 }];
+  const chart = (keys, colors) => {
+    const width = 560, height = 150, max = Math.max(1, ...points.flatMap((point) => keys.map((key) => point[key] || 0)));
+    return <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Live engine graph"><path className="graph-grid" d="M0 30H560M0 75H560M0 120H560"/>{keys.map((key, index) => <polyline key={key} className={colors[index]} points={points.map((point, i) => `${points.length === 1 ? 280 : i * width / (points.length - 1)},${height - 18 - ((point[key] || 0) / max) * (height - 36)}`).join(" ")}/>)}</svg>;
+  };
+  return <div className="overview-graphs"><Card><Head title="Live throughput" sub="new writes and random reads from each 3-second snapshot"/><div className="graph-legend"><span><i className="graph-dot writes"/> Writes</span><span><i className="graph-dot reads"/> Reads</span></div>{chart(["writes", "reads"], ["graph-writes", "graph-reads"])}</Card><Card><Head title="Tree growth" sub="mutable keys, flush checkpoints, compaction merges, and cache hits"/><div className="graph-legend"><span><i className="graph-dot keys"/> Keys</span><span><i className="graph-dot flushes"/> Flushes</span><span><i className="graph-dot compactions"/> Compactions</span><span><i className="graph-dot cache"/> Cache hits</span></div>{chart(["keys", "flushes", "compactions", "cache"], ["graph-keys", "graph-flushes", "graph-compactions", "graph-cache"])}</Card></div>;
+}
+function Dashboard({ status: s, history, go, refresh }) {
   const [clearing, setClearing] = useState(false), [clearMessage, setClearMessage] = useState("");
   const clearAll = async () => { if (!window.confirm("Delete all MemTable, WAL, SSTable, object-store, cache, and metric data? This cannot be undone.")) return; setClearing(true); try { await api("/api/clear-all", { method: "POST" }); setClearMessage("All engine data cleared."); await refresh(); } catch (e) { setClearMessage("Clear failed: " + e.message); } finally { setClearing(false); } };
   return (<>
     <Title eyebrow="SYSTEM ANALYTICS" title="LSM engine overview" desc="Read-only health and performance analytics from the running storage engine." action={<div className="overview-actions"><button className="primary" onClick={() => go("/workload")}><Activity size={15}/> Open live simulation</button><button className="danger" disabled={clearing} onClick={clearAll}><Trash2 size={15}/> {clearing ? "Clearing…" : "Delete all data"}</button></div>} />
     <Card className="danger-zone"><b>Danger zone</b><span>Deletes all current MemTable records, WAL entries, SSTables, object-store copies, cache contents, and performance counters.</span>{clearMessage && <em>{clearMessage}</em>}</Card>
-    <div className="kpis"><Kpi icon={Database} label="MEMTABLE SIZE" value={fmt(s.memtableBytes)+" B"}/><Kpi icon={Archive} label="WAL SIZE" value={fmt(s.walBytes)+" B"} color="cyan"/><Kpi icon={Layers3} label="SSTABLE COUNT" value={fmt(s.sstables)} color="purple"/><Kpi icon={Search} label="CACHE HIT RATE" value={s.readOps ? ((s.cacheHits/s.readOps)*100).toFixed(1)+"%" : "0%"} color="orange"/></div>
+    <div className="kpis"><Kpi icon={Database} label="MEMTABLE SIZE" value={fmt(s.memtableBytes)+" B"}/><Kpi icon={Archive} label="WAL SIZE" value={fmt(s.walBytes)+" B"} color="cyan"/><Kpi icon={Layers3} label="SSTABLE COUNT" value={fmt(s.sstables)} color="purple"/><Kpi icon={Search} label="CACHE HIT RATE" value={s.readOps ? Math.round((s.cacheHits/s.readOps)*100)+"%" : "0%"} color="orange"/></div>
     <div className="performance-grid"><Card><Head title="Write performance" sub="backend measurements"/><div className="telemetry"><Metric n="Throughput" v={fmt(Math.round(s.writeThroughput || 0))+" ops/s"}/><Metric n="Average latency" v={fmt(Math.round(s.avgWriteLatencyUs || 0))+" µs"}/><Metric n="P50" v={fmt(s.writeP50Us || 0)+" µs"}/><Metric n="P90" v={fmt(s.writeP90Us || 0)+" µs"}/><Metric n="P99" v={fmt(s.writeP99Us || 0)+" µs"}/></div></Card><Card><Head title="Read and storage performance" sub="cache, Bloom, SSTable, and object-store counters"/><div className="telemetry"><Metric n="Read throughput" v={fmt(Math.round(s.readThroughput || 0))+" ops/s"}/><Metric n="Read P99" v={fmt(s.readP99Us || 0)+" µs"}/><Metric n="Cache misses" v={fmt(s.cacheMisses || s.readMisses)}/><Metric n="Bloom rejects" v={fmt(s.bloomRejects)}/><Metric n="S3/SSTable reads" v={fmt(s.s3ReadCount || s.sstableReadOps)}/><Metric n="Storage usage" v={fmt(s.storageUsageBytes)+" B"}/></div></Card></div>
     <div className="lab-grid"><Card><Head title="LSM state" sub="current durable and mutable structures"/><div className="analytics"><Metric n="MemTable keys" v={fmt(s.memtableKeys)}/><Metric n="Skip-list levels" v={s.skiplistLevels}/><Metric n="Flushes" v={fmt(s.flushCount)}/><Metric n="Compactions" v={fmt(s.compactionCount)}/><Metric n="Tombstones" v={fmt(s.tombstones)}/><Metric n="Active requests" v={fmt(s.activeRequests)}/></div></Card><Card><Head title="Current MemTable" sub="latest in-memory records"/><DataTable rows={s.memtablePreview} empty="No live records yet. Start a simulation or use CRUD."/></Card></div>
+    <LiveGraphs status={s} history={history}/>
+    <EngineMap status={s}/>
+    <ConceptBoard status={s} go={go}/>
+    <LearningStrip />
   </>);
 }
 function Head({ title, sub }) {
@@ -365,15 +427,35 @@ function DataTable({ rows, empty }) {
 }
 const simulationDefaults = { speed: 100, payloadBytes: 256, keySpace: 1000, readRatio: 20, deleteRatio: 10, temperatureEnabled: true, temperatureRate: 1, humidityEnabled: true, humidityRate: 1, airQualityEnabled: true, airQualityRate: 1, noiseEnabled: true, noiseRate: 5, trafficCountEnabled: true, trafficCountRate: 10, parkingOccupancyEnabled: true, parkingOccupancyRate: 1, vibrationEnabled: true, vibrationRate: 50 };
 function readSimulationConfig() { try { return { ...simulationDefaults, ...JSON.parse(localStorage.getItem("lsm-simulation-config") || "{}") }; } catch { return simulationDefaults; } }
+function SamplePayload() {
+  const [cfg, setCfg] = useState(readSimulationConfig), [selected, setSelected] = useState("temperature");
+  useEffect(() => { const update = () => setCfg(readSimulationConfig()); addEventListener("simulation-config-updated", update); addEventListener("focus", update); return () => { removeEventListener("simulation-config-updated", update); removeEventListener("focus", update); }; }, []);
+  const sensors = [["temperature", "Temperature", "Weather", "temperature-sensor-42", "temperature value=23.42"], ["humidity", "Humidity", "Environment", "humidity-sensor-42", "humidity value=61.08"], ["airQuality", "Air quality", "Pollution", "air-quality-sensor-42", "air-quality value=18.00"], ["noise", "Noise", "Traffic", "noise-sensor-42", "noise value=47.35"], ["trafficCount", "Traffic count", "Vehicles", "traffic-count-sensor-42", "traffic-count value=128.00"], ["parkingOccupancy", "Parking occupancy", "Smart parking", "parking-sensor-42", "parking value=74.00"], ["vibration", "Vibration", "Bridge monitoring", "vibration-sensor-42", "vibration value=12.07"]];
+  const enabled = sensors.filter(([key]) => cfg[key + "Enabled"]), totalRate = enabled.reduce((sum, [key]) => sum + Number(cfg[key + "Rate"] || 0), 0), scaledRate = Math.max(0, Math.round(totalRate * Number(cfg.speed || 100) / 100)), sample = sensors.find(([key]) => key === selected) || sensors[0], [sampleKey, label, use, keyExample, valueExample] = sample, rate = Number(cfg[sampleKey + "Rate"] || 0), actualRate = Math.max(0, Math.round(rate * Number(cfg.speed || 100) / 100)), padding = Math.max(0, Number(cfg.payloadBytes || 0) - valueExample.length), payload = valueExample + "x".repeat(Math.min(padding, 180));
+  return <><Title eyebrow="SIMULATION PREVIEW" title="Sample payload" desc="Show one realistic record to your professor, generated from the current simulation settings."/><div className="sample-summary"><Kpi icon={Database} label="PAYLOAD BYTES" value={fmt(cfg.payloadBytes) + " B"}/><Kpi icon={Activity} label="ACTIVE STREAMS" value={fmt(enabled.length)}/><Kpi icon={Zap} label="APPROX EVENTS / SEC" value={fmt(scaledRate)} color="orange"/><Kpi icon={Search} label="RANDOM READS" value={fmt(cfg.readRatio) + "%"} color="cyan"/></div><Card className="sample-config"><Head title="Choose one sample stream" sub="this changes only the example shown below"/><div className="sample-selector">{sensors.map(([key, label]) => <button key={key} className={selected === key ? "selected" : ""} onClick={() => setSelected(key)}>{label}</button>)}</div></Card><Card className="sample-table"><Head title="Actual generated record" sub={`one PUT record · padded to exactly ${fmt(cfg.payloadBytes)} bytes`}/><div className="payload-list"><div className="payload-card"><div className="payload-title"><div><b>{label}</b><small>{use} · {fmt(rate)} configured events/sec · {fmt(actualRate)} scaled events/sec</small></div><strong className={cfg[sampleKey + "Enabled"] ? "enabled" : "disabled"}>{cfg[sampleKey + "Enabled"] ? "ENABLED" : "DISABLED"}</strong></div><pre>{JSON.stringify({ operation: "PUT", key: keyExample, value: payload }, null, 2)}</pre><small className="payload-foot">Showing {fmt(Math.min(Number(cfg.payloadBytes || 0), valueExample.length + 180))} of {fmt(cfg.payloadBytes)} payload bytes · remaining bytes are padding characters</small></div></div></Card><Card className="sample-note"><Head title="How the backend generates it" sub="simple explanation for your professor"/><p>The backend chooses an enabled stream using its configured rate, creates a key such as <code>{keyExample}</code>, generates the sensor value, then pads the value with <code>x</code> characters until it reaches the configured payload size. With the current settings, this stream is selected about {fmt(actualRate)} times per second at the current speed.</p></Card></>;
+}
 function Workload({ status: s, refresh }) {
-  const [busy, setBusy] = useState(false);
-  const command = async (action) => { setBusy(true); try { await api("/api/simulation/" + action, { method: "POST", body: JSON.stringify(action === "start" ? readSimulationConfig() : {}) }); await refresh(); } finally { setBusy(false); } };
+  const [busy, setBusy] = useState(false), [speed, setSpeed] = useState(100), [probe, setProbe] = useState(null);
+  const command = async (action, selectedSpeed = speed) => { setBusy(true); try { const config = { ...readSimulationConfig(), speed: selectedSpeed }; await api("/api/simulation/" + action, { method: "POST", body: JSON.stringify(action === "start" ? config : {}) }); await refresh(); } finally { setBusy(false); } };
+  const applySpeed = async (nextSpeed = speed) => { setSpeed(nextSpeed); if (s.simulationRunning) await command("start", nextSpeed); };
+  const randomRead = async () => {
+    setProbe({ state: "reading", key: "Choosing a random sensor key…" });
+    try {
+      const cfg = readSimulationConfig(), prefixes = ["temperature", "humidity", "air-quality", "noise", "traffic-count", "parking", "vibration"];
+      const key = `${prefixes[Math.floor(Math.random() * prefixes.length)]}-sensor-${Math.floor(Math.random() * Math.max(1, cfg.keySpace))}`;
+      const before = await api("/api/metrics"), result = await api("/api/get?key=" + encodeURIComponent(key)), after = await api("/api/metrics");
+      const path = after.cacheHits > before.cacheHits ? "BLOCK CACHE HIT" : after.sstableReadOps > before.sstableReadOps ? "SSTABLE READ" : after.bloomRejects > before.bloomRejects ? "BLOOM FILTER REJECT" : result.found ? "MEMTABLE HIT" : "READ MISS";
+      setProbe({ state: "done", key, path, found: result.found, value: result.value });
+      await refresh();
+    } catch (e) { setProbe({ state: "error", key: "Random read failed", path: e.message }); }
+  };
   const hit = s.readOps ? (s.cacheHits / Math.max(1, s.readOps) * 100) : 0, miss = s.readOps ? (s.readMisses / Math.max(1, s.readOps) * 100) : 0;
   return (<>
-    <Title eyebrow="LIVE ENGINE MONITOR" title="Live simulation" desc="Watch the configured sensor stream move through WAL, MemTable, SSTables, cache, Bloom filters, and compaction." action={<div className="live-actions"><span className={s.simulationRunning ? "live-pill" : "live-pill paused"}><i />{s.simulationRunning ? "RUNNING" : "PAUSED"}</span><button className="primary" disabled={busy} onClick={() => command(s.simulationRunning ? "stop" : "start")}>{s.simulationRunning ? <Pause size={15}/> : <Play size={15}/>} {s.simulationRunning ? "Pause stream" : "Start stream"}</button></div>} />
+    <Title eyebrow="LIVE ENGINE MONITOR" title="Live simulation" desc="Watch the configured sensor stream move through WAL, MemTable, SSTables, cache, Bloom filters, and compaction." action={<div className="live-actions"><span className={s.simulationRunning ? "live-pill" : "live-pill paused"}><i />{s.simulationRunning ? "RUNNING" : "PAUSED"}</span></div>} />
+    <Card className="simulation-console"><div className="console-heading"><div><span className="eyebrow">STREAM CONTROLS</span><h2>Engine playback</h2><p>Control the fake sensor workload like a media player. Backend generation changes only when you apply a control.</p></div><span className="speed-readout">{speed}%</span></div><div className="player-row"><button className="player-btn primary" disabled={busy} onClick={() => command(s.simulationRunning ? "stop" : "start")} aria-label={s.simulationRunning ? "Pause stream" : "Start stream"}>{s.simulationRunning ? <Pause size={17}/> : <Play size={17}/>} {s.simulationRunning ? "Pause" : "Start"}</button><button className="player-btn" disabled={busy} onClick={() => command("reset")}><RefreshCw size={16}/> Reset counters</button><button className={speed === 100 ? "speed-btn selected" : "speed-btn"} disabled={busy} onClick={() => applySpeed(100)}>Normal</button><button className={speed === 500 ? "speed-btn selected" : "speed-btn"} disabled={busy} onClick={() => applySpeed(500)}><Zap size={14}/> Fast forward</button><label className="speed-slider"><span>Speed</span><input type="range" min="10" max="1000" step="10" value={speed} onChange={e => setSpeed(Number(e.target.value))}/><b>{speed}%</b></label><button className="player-btn" disabled={busy || !s.simulationRunning} onClick={() => applySpeed()} >Apply speed</button></div></Card>
     <div className="live-kpis"><Kpi icon={Zap} label="INGESTED WRITES" value={fmt(s.simulationWrites)} color="lime"/><Kpi icon={Search} label="RANDOM READS" value={fmt(s.simulationReads)} color="cyan"/><Kpi icon={Database} label="MEMTABLE KEYS" value={fmt(s.memtableKeys)} color="purple"/><Kpi icon={Layers3} label="SSTABLE FILES" value={fmt(s.sstables)} color="orange"/></div>
-    <div className="performance-grid"><Card><Head title="Write path checkpoints" sub="live backend state"/><div className="checkpoint-list"><div><b>WAL</b><span>{fmt(s.walRecords)} records · {fmt(s.walBytes)} B</span><em>durable</em></div><div><b>MemTable</b><span>{fmt(s.memtableKeys)} keys · {fmt(s.memtableBytes)} B</span><em>mutable</em></div><div><b>Flushes</b><span>{fmt(s.flushCount)} completed</span><em>checkpoint</em></div><div><b>Compaction</b><span>{fmt(s.compactionCount)} merges</span><em>sorted merge</em></div></div></Card><Card><Head title="Read path telemetry" sub="random reads exercise cache and Bloom filters"/><div className="telemetry"><Metric n="Cache hits" v={fmt(s.cacheHits)}/><Metric n="Cache misses" v={fmt(s.cacheMisses || s.readMisses)}/><Metric n="Hit rate" v={hit.toFixed(1)+"%"}/><Metric n="Bloom rejects" v={fmt(s.bloomRejects)}/><Metric n="SSTable reads" v={fmt(s.sstableReadOps)}/><Metric n="Cache entries" v={fmt(s.cacheSize)}/></div><div className="meter"><span style={{width: hit+"%"}}/><small>cache hit ratio</small></div><div className="meter miss"><span style={{width: miss+"%"}}/><small>read miss ratio</small></div></Card></div>
-    <Card className="live-tree"><Head title="Live LSM topology" sub="immutable files appear after flush and are merged during compaction"/><div className="topology"><div className="topology-node current"><small>MEMTABLE</small><b>{fmt(s.memtableKeys)}</b><span>ordered skip-list keys</span></div><div className="topology-arrow">flush →</div><div className="topology-node"><small>L0 SSTABLES</small><b>{fmt(s.sstableFiles?.filter(x => x.level === "L0").length || 0)}</b><span>immutable files</span></div><div className="topology-arrow">compact →</div><div className="topology-node"><small>OBJECT STORE</small><b>{fmt(s.sstableFiles?.length || 0)}</b><span>mirrored tables</span></div></div></Card>
+    <div className="performance-grid"><Card><Head title="Write path checkpoints" sub="live backend state"/><div className="checkpoint-list"><div><b>WAL</b><span>{fmt(s.walRecords)} records · {fmt(s.walBytes)} B</span><em>durable</em></div><div><b>MemTable</b><span>{fmt(s.memtableKeys)} keys · {fmt(s.memtableBytes)} B</span><em>mutable · L{s.skiplistLevels || 1}</em></div><div><b>Flushes</b><span>{fmt(s.flushCount)} completed</span><em>checkpoint</em></div><div><b>Compaction</b><span>{fmt(s.compactionCount)} merges</span><em>sorted merge</em></div></div></Card><Card><Head title="Read path telemetry" sub="random reads exercise cache and Bloom filters"/><div className="telemetry"><Metric n="Cache hits" v={fmt(s.cacheHits)}/><Metric n="Cache misses" v={fmt(s.cacheMisses || s.readMisses)}/><Metric n="Hit rate" v={Math.round(hit)+"%"}/><Metric n="Bloom rejects" v={fmt(s.bloomRejects)}/><Metric n="SSTable reads" v={fmt(s.sstableReadOps)}/><Metric n="Cache entries" v={fmt(s.cacheSize)}/></div><div className="meter"><span style={{width: hit+"%"}}/><small>cache hit ratio</small></div><div className="meter miss"><span style={{width: miss+"%"}}/><small>read miss ratio</small></div><button className="probe-button" onClick={randomRead} disabled={probe?.state === "reading"}><Search size={15}/> {probe?.state === "reading" ? "Reading…" : "Run random read"}</button>{probe && <div className="probe-result"><code>{probe.key}</code><b>{probe.path}</b>{probe.found !== undefined && <span>{probe.found ? "value returned" : "key not found"}</span>}</div>}</Card></div>
+    <Card className="live-tree"><Head title="Live LSM topology" sub="watch mutable memory become immutable sorted files, then merge into lower levels"/><div className="topology"><div className="topology-node current"><small>MEMTABLE</small><b>{fmt(s.memtableKeys)}</b><span>skip list · {s.skiplistLevels || 1} levels</span><div className="level-stack">{Array.from({length: Math.min(8, s.skiplistLevels || 1)}, (_, i) => <i key={i} style={{width: `${35 + i * 9}%`}}>L{i}</i>)}</div></div><div className="topology-arrow">flush →</div><div className="topology-node"><small>L0 SSTABLES</small><b>{fmt(s.sstableFiles?.filter(x => x.level === "L0").length || 0)}</b><span>{fmt(s.flushCount)} flush checkpoints</span></div><div className="topology-arrow">compact →</div><div className="topology-node"><small>L1 / OBJECT STORE</small><b>{fmt(s.sstableFiles?.filter(x => x.level !== "L0").length || 0)}</b><span>{fmt(s.compactionCount)} sorted merges · {fmt(s.cacheSize)} cached blocks</span></div></div></Card>
     <Card><Head title="Latest MemTable entries" sub="newest records from the running stream"/><DataTable rows={s.memtablePreview} empty="Configure the stream in Parameters, then start it here."/></Card>
   </>);
 }
@@ -499,7 +581,7 @@ function Wal() {
         .then(setRows)
         .catch(() => {});
     f();
-    const t = setInterval(f, 1500);
+    const t = setInterval(f, LIVE_POLL_MS);
     return () => clearInterval(t);
   }, []);
   return (
