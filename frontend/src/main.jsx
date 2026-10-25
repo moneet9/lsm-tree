@@ -27,6 +27,7 @@ import "./lab.css";
 import "./visual.css";
 import "./professor.css";
 import "./workload.css";
+import "./explainer.css";
 const api = async (path, options = {}) => {
   const r = await fetch(path, {
     headers: { "Content-Type": "application/json" },
@@ -39,7 +40,7 @@ const nav = [
   ["/", "Overview", Gauge],
   ["/workload", "Live simulation", Activity],
   ["/sample", "Sample payload", UploadCloud],
-  ["/crud", "CRUD lab", Terminal],
+  ["/crud", "Manual operations", Terminal],
   ["/memtable", "MemTable", Database],
   ["/wal", "WAL records", Archive],
   ["/search", "Read pipeline", Search],
@@ -67,6 +68,7 @@ const empty = {
   spaceAmplification: 0,
   storage: "offline",
   memtablePreview: [],
+  skiplistNodes: [],
   sstableFiles: [],
   memtableType: "ordered skip list",
   skiplistLevels: 4,
@@ -86,8 +88,8 @@ function useRoute() {
   }, []);
   return [p, (x) => (location.hash = x)];
 }
-function Card({ children, className = "" }) {
-  return <section className={"card " + className}>{children}</section>;
+function Card({ children, className = "", ...props }) {
+  return <section className={"card " + className} {...props}>{children}</section>;
 }
 function Title({ eyebrow, title, desc, action }) {
   return (
@@ -314,7 +316,7 @@ function EngineMap({ status: s }) {
           </React.Fragment>
         ))}
       </div>
-      <div className="map-legend"><span><i className="dot memory" /> mutable memory</span><span><i className="dot durable" /> durable log</span><span><i className="dot immutable" /> immutable files</span><span><i className="dot cloud" /> object storage</span></div>
+      <div className="map-legend"><span><i className="dot memory" /> mutable memory</span><span><i className="dot durable" /> durable log</span><span><i className="dot immutable" /> immutable files</span><span><i className="dot cloud" /> local object mirror</span></div>
     </Card>
   );
 }
@@ -327,13 +329,13 @@ function ConceptBoard({ status: s, go }) {
     ["05", "SSTables + local mirror", "Immutable files carry data blocks, sparse indexes, Bloom filters, and a local object mirror.", fmt(s.sstables) + " local files", HardDrive, "/sstables", "Inspect files"],
     ["06", "Amplification trade-offs", "Write, read, and space costs reveal why LSM engines tune buffers and levels.", Math.round(s.writeAmplification || 0) + "× write amp", Activity, "/settings", "Tune parameters"],
   ];
-  return <Card className="concept-board"><div className="board-title"><div><span className="eyebrow">PROFESSOR BRIEFING</span><h2>Six ideas, one storage engine</h2><p>Use the board as a guided tour, then open each experiment for live evidence.</p></div><span className="board-status"><i /> LIVE ENGINE MODEL</span></div><div className="concept-grid">{concepts.map(([n,title,desc,metric,Icon,route,action]) => <div className="concept-card" key={title}><div className="concept-top"><span>{n}</span><Icon size={17} /></div><h3>{title}</h3><p>{desc}</p><strong>{metric}</strong><button onClick={() => go(route)}>{action}<ChevronRight size={14} /></button></div>)}</div></Card>;
+  return <Card className="concept-board"><div className="board-title"><div><span className="eyebrow">LSM CONCEPT OVERVIEW</span><h2>Six ideas, one storage engine</h2><p>Explore each component and inspect its live state and performance data.</p></div><span className="board-status"><i /> LIVE ENGINE MODEL</span></div><div className="concept-grid">{concepts.map(([n,title,desc,metric,Icon,route,action]) => <div className="concept-card" key={title}><div className="concept-top"><span>{n}</span><Icon size={17} /></div><h3>{title}</h3><p>{desc}</p><strong>{metric}</strong><button onClick={() => go(route)}>{action}<ChevronRight size={14} /></button></div>)}</div></Card>;
 }
 function LearningStrip() {
   return (
     <Card className="learning-strip">
       <div className="learn-title">
-        <span className="eyebrow">TEACHING MODE · LSM WRITE PATH</span>
+        <span className="eyebrow">WRITE PATH OVERVIEW</span>
         <h2>How an LSM write works</h2>
         <p>
           Follow one record from durable intent to sorted immutable storage.
@@ -377,7 +379,7 @@ function Dashboard({ status: s, history, go, refresh }) {
     <Title eyebrow="SYSTEM ANALYTICS" title="LSM engine overview" desc="Read-only health and performance analytics from the running storage engine." action={<div className="overview-actions"><button className="primary" onClick={() => go("/workload")}><Activity size={15}/> Open live simulation</button><button className="danger" disabled={clearing} onClick={clearAll}><Trash2 size={15}/> {clearing ? "Clearing…" : "Delete all data"}</button></div>} />
     <Card className="danger-zone"><b>Danger zone</b><span>Deletes all current MemTable records, WAL entries, SSTables, object-store copies, cache contents, and performance counters.</span>{clearMessage && <em>{clearMessage}</em>}</Card>
     <div className="kpis"><Kpi icon={Database} label="MEMTABLE SIZE" value={fmt(s.memtableBytes)+" B"}/><Kpi icon={Archive} label="WAL SIZE" value={fmt(s.walBytes)+" B"} color="cyan"/><Kpi icon={Layers3} label="SSTABLE COUNT" value={fmt(s.sstables)} color="purple"/><Kpi icon={Search} label="CACHE HIT RATE" value={s.readOps ? Math.round((s.cacheHits/s.readOps)*100)+"%" : "0%"} color="orange"/></div>
-    <div className="performance-grid"><Card><Head title="Write performance" sub="backend measurements"/><div className="telemetry"><Metric n="Throughput" v={fmt(Math.round(s.writeThroughput || 0))+" ops/s"}/><Metric n="Average latency" v={fmt(Math.round(s.avgWriteLatencyUs || 0))+" µs"}/><Metric n="P50" v={fmt(s.writeP50Us || 0)+" µs"}/><Metric n="P90" v={fmt(s.writeP90Us || 0)+" µs"}/><Metric n="P99" v={fmt(s.writeP99Us || 0)+" µs"}/></div></Card><Card><Head title="Read and storage performance" sub="cache, Bloom, SSTable, and object-store counters"/><div className="telemetry"><Metric n="Read throughput" v={fmt(Math.round(s.readThroughput || 0))+" ops/s"}/><Metric n="Read P99" v={fmt(s.readP99Us || 0)+" µs"}/><Metric n="Cache misses" v={fmt(s.cacheMisses || s.readMisses)}/><Metric n="Bloom rejects" v={fmt(s.bloomRejects)}/><Metric n="S3/SSTable reads" v={fmt(s.s3ReadCount || s.sstableReadOps)}/><Metric n="Storage usage" v={fmt(s.storageUsageBytes)+" B"}/></div></Card></div>
+    <div className="performance-grid"><Card><Head title="Write performance" sub="backend measurements"/><div className="telemetry"><Metric n="Throughput" v={fmt(Math.round(s.writeThroughput || 0))+" ops/s"}/><Metric n="Average latency" v={fmt(Math.round(s.avgWriteLatencyUs || 0))+" µs"}/><Metric n="P50" v={fmt(s.writeP50Us || 0)+" µs"}/><Metric n="P90" v={fmt(s.writeP90Us || 0)+" µs"}/><Metric n="P99" v={fmt(s.writeP99Us || 0)+" µs"}/></div></Card><Card><Head title="Read and storage performance" sub="cache, Bloom, SSTable, and local mirror counters"/><div className="telemetry"><Metric n="Read throughput" v={fmt(Math.round(s.readThroughput || 0))+" ops/s"}/><Metric n="Read P99" v={fmt(s.readP99Us || 0)+" µs"}/><Metric n="Cache misses" v={fmt(s.cacheMisses || s.readMisses)}/><Metric n="Bloom rejects" v={fmt(s.bloomRejects)}/><Metric n="Local mirror reads" v={fmt(s.localMirrorReadCount || s.sstableReadOps)}/><Metric n="Storage usage" v={fmt(s.storageUsageBytes)+" B"}/></div></Card></div>
     <div className="lab-grid"><Card><Head title="LSM state" sub="current durable and mutable structures"/><div className="analytics"><Metric n="MemTable keys" v={fmt(s.memtableKeys)}/><Metric n="Skip-list levels" v={s.skiplistLevels}/><Metric n="Flushes" v={fmt(s.flushCount)}/><Metric n="Compactions" v={fmt(s.compactionCount)}/><Metric n="Tombstones" v={fmt(s.tombstones)}/><Metric n="Active requests" v={fmt(s.activeRequests)}/></div></Card><Card><Head title="Current MemTable" sub="latest in-memory records"/><DataTable rows={s.memtablePreview} empty="No live records yet. Start a simulation or use CRUD."/></Card></div>
     <LiveGraphs status={s} history={history}/>
     <EngineMap status={s}/>
@@ -432,11 +434,11 @@ function SamplePayload() {
   useEffect(() => { const update = () => setCfg(readSimulationConfig()); addEventListener("simulation-config-updated", update); addEventListener("focus", update); return () => { removeEventListener("simulation-config-updated", update); removeEventListener("focus", update); }; }, []);
   const sensors = [["temperature", "Temperature", "Weather", "temperature-sensor-42", "temperature value=23.42"], ["humidity", "Humidity", "Environment", "humidity-sensor-42", "humidity value=61.08"], ["airQuality", "Air quality", "Pollution", "air-quality-sensor-42", "air-quality value=18.00"], ["noise", "Noise", "Traffic", "noise-sensor-42", "noise value=47.35"], ["trafficCount", "Traffic count", "Vehicles", "traffic-count-sensor-42", "traffic-count value=128.00"], ["parkingOccupancy", "Parking occupancy", "Smart parking", "parking-sensor-42", "parking value=74.00"], ["vibration", "Vibration", "Bridge monitoring", "vibration-sensor-42", "vibration value=12.07"]];
   const enabled = sensors.filter(([key]) => cfg[key + "Enabled"]), totalRate = enabled.reduce((sum, [key]) => sum + Number(cfg[key + "Rate"] || 0), 0), scaledRate = Math.max(0, Math.round(totalRate * Number(cfg.speed || 100) / 100)), sample = sensors.find(([key]) => key === selected) || sensors[0], [sampleKey, label, use, keyExample, valueExample] = sample, rate = Number(cfg[sampleKey + "Rate"] || 0), actualRate = Math.max(0, Math.round(rate * Number(cfg.speed || 100) / 100)), padding = Math.max(0, Number(cfg.payloadBytes || 0) - valueExample.length), payload = valueExample + "x".repeat(Math.min(padding, 180));
-  return <><Title eyebrow="SIMULATION PREVIEW" title="Sample payload" desc="Show one realistic record to your professor, generated from the current simulation settings."/><div className="sample-summary"><Kpi icon={Database} label="PAYLOAD BYTES" value={fmt(cfg.payloadBytes) + " B"}/><Kpi icon={Activity} label="ACTIVE STREAMS" value={fmt(enabled.length)}/><Kpi icon={Zap} label="APPROX EVENTS / SEC" value={fmt(scaledRate)} color="orange"/><Kpi icon={Search} label="RANDOM READS" value={fmt(cfg.readRatio) + "%"} color="cyan"/></div><Card className="sample-config"><Head title="Choose one sample stream" sub="this changes only the example shown below"/><div className="sample-selector">{sensors.map(([key, label]) => <button key={key} className={selected === key ? "selected" : ""} onClick={() => setSelected(key)}>{label}</button>)}</div></Card><Card className="sample-table"><Head title="Actual generated record" sub={`one PUT record · padded to exactly ${fmt(cfg.payloadBytes)} bytes`}/><div className="payload-list"><div className="payload-card"><div className="payload-title"><div><b>{label}</b><small>{use} · {fmt(rate)} configured events/sec · {fmt(actualRate)} scaled events/sec</small></div><strong className={cfg[sampleKey + "Enabled"] ? "enabled" : "disabled"}>{cfg[sampleKey + "Enabled"] ? "ENABLED" : "DISABLED"}</strong></div><pre>{JSON.stringify({ operation: "PUT", key: keyExample, value: payload }, null, 2)}</pre><small className="payload-foot">Showing {fmt(Math.min(Number(cfg.payloadBytes || 0), valueExample.length + 180))} of {fmt(cfg.payloadBytes)} payload bytes · remaining bytes are padding characters</small></div></div></Card><Card className="sample-note"><Head title="How the backend generates it" sub="simple explanation for your professor"/><p>The backend chooses an enabled stream using its configured rate, creates a key such as <code>{keyExample}</code>, generates the sensor value, then pads the value with <code>x</code> characters until it reaches the configured payload size. With the current settings, this stream is selected about {fmt(actualRate)} times per second at the current speed.</p></Card></>;
+  return <><Title eyebrow="SIMULATION PREVIEW" title="Sample payload" desc="View a representative sensor record generated from the current simulation settings."/><div className="sample-summary"><Kpi icon={Database} label="PAYLOAD BYTES" value={fmt(cfg.payloadBytes) + " B"}/><Kpi icon={Activity} label="ACTIVE STREAMS" value={fmt(enabled.length)}/><Kpi icon={Zap} label="APPROX EVENTS / SEC" value={fmt(scaledRate)} color="orange"/><Kpi icon={Search} label="RANDOM READS" value={fmt(cfg.readRatio) + "%"} color="cyan"/></div><Card className="sample-config"><Head title="Choose one sample stream" sub="this changes only the example shown below"/><div className="sample-selector">{sensors.map(([key, label]) => <button key={key} className={selected === key ? "selected" : ""} onClick={() => setSelected(key)}>{label}</button>)}</div></Card><Card className="sample-table"><Head title="Actual generated record" sub={`one PUT record · padded to exactly ${fmt(cfg.payloadBytes)} bytes`}/><div className="payload-list"><div className="payload-card"><div className="payload-title"><div><b>{label}</b><small>{use} · {fmt(rate)} configured events/sec · {fmt(actualRate)} scaled events/sec</small></div><strong className={cfg[sampleKey + "Enabled"] ? "enabled" : "disabled"}>{cfg[sampleKey + "Enabled"] ? "ENABLED" : "DISABLED"}</strong></div><pre>{JSON.stringify({ operation: "PUT", key: keyExample, value: payload }, null, 2)}</pre><small className="payload-foot">Showing {fmt(Math.min(Number(cfg.payloadBytes || 0), valueExample.length + 180))} of {fmt(cfg.payloadBytes)} payload bytes · remaining bytes are padding characters</small></div></div></Card><Card className="sample-note"><Head title="How the backend generates it" sub="record generation steps"/><p>The backend chooses an enabled stream using its configured rate, creates a key such as <code>{keyExample}</code>, generates the sensor value, then pads the value with <code>x</code> characters until it reaches the configured payload size. With the current settings, this stream is selected about {fmt(actualRate)} times per second at the current speed.</p></Card></>;
 }
 function Workload({ status: s, refresh }) {
-  const [busy, setBusy] = useState(false), [speed, setSpeed] = useState(100), [probe, setProbe] = useState(null);
-  const command = async (action, selectedSpeed = speed) => { setBusy(true); try { const config = { ...readSimulationConfig(), speed: selectedSpeed }; await api("/api/simulation/" + action, { method: "POST", body: JSON.stringify(action === "start" ? config : {}) }); await refresh(); } finally { setBusy(false); } };
+  const [busy, setBusy] = useState(false), [speed, setSpeed] = useState(100), [probe, setProbe] = useState(null), [controlError, setControlError] = useState("");
+  const command = async (action, selectedSpeed = speed) => { setBusy(true); setControlError(""); try { const config = { ...readSimulationConfig(), speed: selectedSpeed }; await api("/api/simulation/" + action, { method: "POST", body: JSON.stringify(action === "start" ? config : {}) }); await refresh(); } catch (e) { setControlError(e.message); } finally { setBusy(false); } };
   const applySpeed = async (nextSpeed = speed) => { setSpeed(nextSpeed); if (s.simulationRunning) await command("start", nextSpeed); };
   const randomRead = async () => {
     setProbe({ state: "reading", key: "Choosing a random sensor key…" });
@@ -452,7 +454,7 @@ function Workload({ status: s, refresh }) {
   const hit = s.readOps ? (s.cacheHits / Math.max(1, s.readOps) * 100) : 0, miss = s.readOps ? (s.readMisses / Math.max(1, s.readOps) * 100) : 0;
   return (<>
     <Title eyebrow="LIVE ENGINE MONITOR" title="Live simulation" desc="Watch the configured sensor stream move through WAL, MemTable, SSTables, cache, Bloom filters, and compaction." action={<div className="live-actions"><span className={s.simulationRunning ? "live-pill" : "live-pill paused"}><i />{s.simulationRunning ? "RUNNING" : "PAUSED"}</span></div>} />
-    <Card className="simulation-console"><div className="console-heading"><div><span className="eyebrow">STREAM CONTROLS</span><h2>Engine playback</h2><p>Control the fake sensor workload like a media player. Backend generation changes only when you apply a control.</p></div><span className="speed-readout">{speed}%</span></div><div className="player-row"><button className="player-btn primary" disabled={busy} onClick={() => command(s.simulationRunning ? "stop" : "start")} aria-label={s.simulationRunning ? "Pause stream" : "Start stream"}>{s.simulationRunning ? <Pause size={17}/> : <Play size={17}/>} {s.simulationRunning ? "Pause" : "Start"}</button><button className="player-btn" disabled={busy} onClick={() => command("reset")}><RefreshCw size={16}/> Reset counters</button><button className={speed === 100 ? "speed-btn selected" : "speed-btn"} disabled={busy} onClick={() => applySpeed(100)}>Normal</button><button className={speed === 500 ? "speed-btn selected" : "speed-btn"} disabled={busy} onClick={() => applySpeed(500)}><Zap size={14}/> Fast forward</button><label className="speed-slider"><span>Speed</span><input type="range" min="10" max="1000" step="10" value={speed} onChange={e => setSpeed(Number(e.target.value))}/><b>{speed}%</b></label><button className="player-btn" disabled={busy || !s.simulationRunning} onClick={() => applySpeed()} >Apply speed</button></div></Card>
+    <Card className="simulation-console"><div className="console-heading"><div><span className="eyebrow">STREAM CONTROLS</span><h2>Engine playback</h2><p>Control the synthetic sensor workload like a media player. Backend generation changes only when you apply a control.</p></div><span className="speed-readout">{speed}%</span></div><div className="player-row"><button className="player-btn primary" disabled={busy} onClick={() => command(s.simulationRunning ? "stop" : "start")} aria-label={s.simulationRunning ? "Pause stream" : "Start stream"}>{s.simulationRunning ? <Pause size={17}/> : <Play size={17}/>} {s.simulationRunning ? "Pause" : "Start"}</button><button className="player-btn" disabled={busy} onClick={() => command("reset")}><RefreshCw size={16}/> Reset counters</button><button className={speed === 100 ? "speed-btn selected" : "speed-btn"} disabled={busy} onClick={() => applySpeed(100)}>Normal</button><button className={speed === 500 ? "speed-btn selected" : "speed-btn"} disabled={busy} onClick={() => applySpeed(500)}><Zap size={14}/> Fast forward</button><label className="speed-slider"><span>Speed</span><input type="range" min="10" max="1000" step="10" value={speed} onChange={e => setSpeed(Number(e.target.value))}/><b>{speed}%</b></label><button className="player-btn" disabled={busy || !s.simulationRunning} onClick={() => applySpeed()} >Apply speed</button></div>{(controlError || s.simulationError) && <p className="stream-error">Stream paused after an error: {controlError || s.simulationError}</p>}</Card>
     <div className="live-kpis"><Kpi icon={Zap} label="INGESTED WRITES" value={fmt(s.simulationWrites)} color="lime"/><Kpi icon={Search} label="RANDOM READS" value={fmt(s.simulationReads)} color="cyan"/><Kpi icon={Database} label="MEMTABLE KEYS" value={fmt(s.memtableKeys)} color="purple"/><Kpi icon={Layers3} label="SSTABLE FILES" value={fmt(s.sstables)} color="orange"/></div>
     <div className="performance-grid"><Card><Head title="Write path checkpoints" sub="live backend state"/><div className="checkpoint-list"><div><b>WAL</b><span>{fmt(s.walRecords)} records · {fmt(s.walBytes)} B</span><em>durable</em></div><div><b>MemTable</b><span>{fmt(s.memtableKeys)} keys · {fmt(s.memtableBytes)} B</span><em>mutable · L{s.skiplistLevels || 1}</em></div><div><b>Flushes</b><span>{fmt(s.flushCount)} completed</span><em>checkpoint</em></div><div><b>Compaction</b><span>{fmt(s.compactionCount)} merges</span><em>sorted merge</em></div></div></Card><Card><Head title="Read path telemetry" sub="random reads exercise cache and Bloom filters"/><div className="telemetry"><Metric n="Cache hits" v={fmt(s.cacheHits)}/><Metric n="Cache misses" v={fmt(s.cacheMisses || s.readMisses)}/><Metric n="Hit rate" v={Math.round(hit)+"%"}/><Metric n="Bloom rejects" v={fmt(s.bloomRejects)}/><Metric n="SSTable reads" v={fmt(s.sstableReadOps)}/><Metric n="Cache entries" v={fmt(s.cacheSize)}/></div><div className="meter"><span style={{width: hit+"%"}}/><small>cache hit ratio</small></div><div className="meter miss"><span style={{width: miss+"%"}}/><small>read miss ratio</small></div><button className="probe-button" onClick={randomRead} disabled={probe?.state === "reading"}><Search size={15}/> {probe?.state === "reading" ? "Reading…" : "Run random read"}</button>{probe && <div className="probe-result"><code>{probe.key}</code><b>{probe.path}</b>{probe.found !== undefined && <span>{probe.found ? "value returned" : "key not found"}</span>}</div>}</Card></div>
     <Card className="live-tree"><Head title="Live LSM topology" sub="watch mutable memory become immutable sorted files, then merge into lower levels"/><div className="topology"><div className="topology-node current"><small>MEMTABLE</small><b>{fmt(s.memtableKeys)}</b><span>skip list · {s.skiplistLevels || 1} levels</span><div className="level-stack">{Array.from({length: Math.min(8, s.skiplistLevels || 1)}, (_, i) => <i key={i} style={{width: `${35 + i * 9}%`}}>L{i}</i>)}</div></div><div className="topology-arrow">flush →</div><div className="topology-node"><small>L0 SSTABLES</small><b>{fmt(s.sstableFiles?.filter(x => x.level === "L0").length || 0)}</b><span>{fmt(s.flushCount)} flush checkpoints</span></div><div className="topology-arrow">compact →</div><div className="topology-node"><small>L1 / OBJECT STORE</small><b>{fmt(s.sstableFiles?.filter(x => x.level !== "L0").length || 0)}</b><span>{fmt(s.compactionCount)} sorted merges · {fmt(s.cacheSize)} cached blocks</span></div></div></Card>
@@ -461,41 +463,47 @@ function Workload({ status: s, refresh }) {
 }
 
 function Crud({ refresh }) {
+  const samples = [
+    ["Temperature", "temperature-sensor-42", "temperature value=23.42"],
+    ["Humidity", "humidity-sensor-42", "humidity value=61.08"],
+    ["Air quality", "air-quality-sensor-42", "air-quality value=18.00"],
+    ["Noise", "noise-sensor-42", "noise value=47.35"],
+    ["Traffic count", "traffic-count-sensor-42", "traffic-count value=128.00"],
+    ["Parking", "parking-sensor-42", "parking value=74.00"],
+    ["Vibration", "vibration-sensor-42", "vibration value=12.07"],
+  ];
   const [tab, setTab] = useState("PUT"),
-    [key, setKey] = useState("hello"),
-    [value, setValue] = useState("world"),
+    [key, setKey] = useState(samples[0][1]),
+    [value, setValue] = useState(samples[0][2]),
+    [trace, setTrace] = useState(null),
     [message, setMessage] = useState("");
+  const choose = ([, sampleKey, sampleValue]) => { setKey(sampleKey); setValue(sampleValue); setTrace(null); setMessage(""); };
   const act = async () => {
     try {
-      let data =
-        tab === "GET"
-          ? await api("/api/get?key=" + encodeURIComponent(key))
-          : await api(tab === "DELETE" ? "/api/delete" : "/api/put", {
-              method: "POST",
-              body: JSON.stringify({ key, value }),
-            });
-      setMessage(
-        tab === "GET"
-          ? data.found
-            ? `Found: ${data.value}`
-            : "Key not found"
-          : tab === "DELETE"
-            ? "Tombstone created in WAL"
-            : "Value committed to WAL → MemTable",
-      );
+      const data = tab === "GET"
+        ? await api("/api/get-trace?key=" + encodeURIComponent(key))
+        : await api(tab === "DELETE" ? "/api/delete" : "/api/put", { method: "POST", body: JSON.stringify({ key, value }) });
+      setTrace(data);
+      setMessage(tab === "GET"
+        ? (data.found ? `Value retrieved: ${data.value}` : `No live value found (${data.path || data.state || "not found"}).`)
+        : tab === "DELETE"
+          ? `Delete recorded as sequence ${data.sequence}; a tombstone hides older values.`
+          : `Write recorded as sequence ${data.sequence}; WAL is durable before MemTable update.`);
       await refresh();
     } catch (e) {
-      setMessage("Backend error: " + e.message);
+      setTrace(null); setMessage("Operation failed: " + e.message);
     }
   };
   return (
     <>
       <Title
         eyebrow="REAL DATA OPERATIONS"
-        title="CRUD lab"
-        desc="Write, read, update, and tombstone actual records."
+        title="Manual data operations"
+        desc="Send one controlled PUT, GET, or DELETE and follow its effect through the engine."
       />
       <Card className="crud">
+        <div className="crud-purpose"><b>Try a sensor record</b><span>Choose a sensor type to fill a realistic key and value. Run PUT, GET, or DELETE to see how that record travels through the LSM engine.</span></div>
+        <div className="sensor-presets" aria-label="Sensor data examples">{samples.map(sample => <button key={sample[0]} className={key === sample[1] ? "selected" : ""} onClick={() => choose(sample)}>{sample[0]}</button>)}</div>
         <div className="tabs">
           {["PUT", "GET", "DELETE"].map((x) => (
             <button
@@ -529,21 +537,21 @@ function Crud({ refresh }) {
               {tab === "DELETE" ? <Trash2 size={15} /> : <Zap size={15} />}{" "}
               Execute {tab}
             </button>
-            <p className="result">{message}</p>
           </div>
-          <div className="write-path">
-            <b>Actual write path</b>
-            <span>01 · HTTP request</span>
-            <span>02 · WAL append</span>
-            <span>03 · MemTable mutation</span>
-            <span>04 · Flush creates SSTable</span>
+          <div className="write-path"><b>{tab === "GET" ? "How a read is resolved" : tab === "DELETE" ? "How a delete works" : "How a write is stored"}</b>
+            {(tab === "GET" ? ["1. Check the MemTable skip list first.", "2. If absent, check the block cache.", "3. Check SSTable range and Bloom filters.", "4. Use the sparse index to locate a data block if needed."] : tab === "DELETE" ? ["1. Append a DEL record to the WAL.", "2. Add a tombstone for this key to the MemTable.", "3. Reads now treat the key as deleted.", "4. Compaction later removes older copies safely."] : ["1. Append the PUT record to the WAL.", "2. Insert or update the key in the MemTable skip list.", "3. Reads see the newest in-memory value first.", "4. When full, flush sorted records into an SSTable."]).map((step, i) => <span key={i}>{step}</span>)}
           </div>
         </div>
+        <div className="sensor-record"><small>RECORD SENT TO THE ENGINE</small><pre>{JSON.stringify({ key, ...(tab !== "DELETE" ? { value } : {}), operation: tab }, null, 2)}</pre></div>
+        {trace && <div className="operation-trace"><b>{tab === "GET" ? `Read path: ${trace.path || (trace.found ? "VALUE FOUND" : "NOT FOUND")}` : `${tab} accepted · sequence ${trace.sequence}`}</b>{tab === "GET" && <span>{trace.found ? `Returned value: ${trace.value}` : "No current value was returned for this key."}</span>}{trace.steps?.map((step, i) => <div key={i}><strong>{step.stage}</strong><span>{step.result}</span></div>)}</div>}
+        {message && <p className="result">{message}</p>}
       </Card>
     </>
   );
 }
 function Memtable({ status: s }) {
+  const nodes = (s.skiplistNodes || []).slice(0, 10);
+  const levels = Math.max(1, Number(s.skiplistLevels) || 1);
   return (
     <>
       <Title eyebrow="REAL VOLATILE STATE" title="MemTable inspector" desc="Inspect the live ordered skip list before it is flushed into an SSTable." />
@@ -559,15 +567,17 @@ function Memtable({ status: s }) {
           <DataTable rows={s.memtablePreview} empty="MemTable is empty. Add a record or run a workload." />
         </Card>
         <Card>
-          <Head title="Skip-list structure" sub="live levels reported by the C++ engine" />
+          <Head title="How the skip list finds a key" sub={`${levels} active level${levels === 1 ? "" : "s"} · showing up to ${nodes.length} real keys`} />
+          <p className="skiplist-intro">Think of the MemTable as a sorted line of keys with shortcut lanes above it. Every key is on L0; taller nodes also appear on higher lanes.</p>
           <div className="skiplist-visual">
-            {Array.from({ length: s.skiplistLevels || 1 }, (_, level) => (
-              <div className="skiplist-level" key={level}>
-                <b>L{level}</b><span /><i>{level === 0 ? `${fmt(s.memtableKeys)} entries` : "express links"}</i>
-              </div>
-            ))}
+            {Array.from({ length: levels }, (_, row) => {
+              const level = levels - row - 1;
+              const laneNodes = nodes.filter((node) => node.height > level);
+              return <div className={`skiplist-level ${level === 0 ? "base-level" : ""}`} key={level}><b>L{level}{level === 0 ? " · all keys" : ""}</b><div className="skiplist-lane"><span className="skiplist-sentinel">HEAD</span>{laneNodes.map((node) => <span className="skiplist-node" title={`Node height ${node.height}`} key={node.key}>{node.key}</span>)}<span className="skiplist-sentinel">NULL</span></div></div>;
+            })}
           </div>
-          <p className="result">Flush occurs when the configured MemTable limit is reached. The WAL is retained until the SSTable is published successfully.</p>
+          <div className="skiplist-lesson"><b>How a lookup moves</b><ol><li>Start at HEAD on the highest active lane.</li><li>Move right while the next key is smaller than the key you want.</li><li>When the next key is too large, drop down one lane from the same node.</li><li>At L0, compare the next key. A match is found; otherwise the key is absent.</li></ol><p>Upper lanes skip over groups of keys, so the engine checks fewer entries than a full scan. Nodes shown here are taken from the live ordered MemTable; higher lanes contain only the taller nodes.</p></div>
+          <p className="result">When the configured MemTable limit is reached, its sorted entries are written to an SSTable. The WAL is kept until that table is safely published.</p>
         </Card>
       </div>
     </>
@@ -629,22 +639,21 @@ function Wal() {
   );
 }
 function Sstables() {
-  const [files, setFiles] = useState([]);
-  useEffect(() => {
-    api("/api/sstables")
-      .then(setFiles)
-      .catch(() => {});
-  }, []);
+  const [files, setFiles] = useState([]), [selectedName, setSelectedName] = useState(""), [detail, setDetail] = useState(null), [searchKey, setSearchKey] = useState(""), [detailBusy, setDetailBusy] = useState(false), [detailError, setDetailError] = useState("");
+  const load = () => api("/api/sstables").then((items) => { setFiles(items); setSelectedName((current) => current && items.some((item) => item.name === current) ? current : items[0]?.name || ""); }).catch(() => {});
+  useEffect(() => { load(); const timer = setInterval(load, 2500); return () => clearInterval(timer); }, []);
+  const loadDetail = async (name = selectedName, key = "") => { if (!name) return; setDetailBusy(true); setDetailError(""); try { setDetail(await api(`/api/sstable-detail?name=${encodeURIComponent(name)}&key=${encodeURIComponent(key)}`)); } catch (e) { setDetailError(e.message); } finally { setDetailBusy(false); } };
+  useEffect(() => { if (selectedName) { setDetail(null); setSearchKey(""); loadDetail(selectedName); } else setDetail(null); }, [selectedName]);
   return (
     <>
       <Title
         eyebrow="REAL IMMUTABLE FILES"
         title="SSTable explorer"
-        desc="Metadata extracted from actual binary table files and their local object mirror."
+        desc="Click a table to inspect its manifest row, sparse index, Bloom filter, and a traced point lookup."
       />
       <div className="sstable-grid">
         {files.map((f) => (
-          <Card className="sstable" key={f.name}>
+          <Card className={`sstable ${selectedName === f.name ? "selected" : ""}`} key={f.name} role="button" tabIndex={0} aria-pressed={selectedName === f.name} onClick={() => setSelectedName(f.name)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedName(f.name); } }}>
             <div className="file-head">
               <span className="level-tag">{f.level}</span>
               <code>{f.name}</code>
@@ -663,9 +672,10 @@ function Sstables() {
                 Sparse index <b>{fmt(f.indexBytes)} B</b>
               </span>
               <span>
-                Bloom filter <b className="success">{f.bloom}</b>
+                  Bloom filter <b className="success">{fmt(f.bloomBits)} bits</b>
               </span>
             </div>
+            <small className="table-open-hint">{selectedName === f.name ? "DETAILS OPEN BELOW" : "SELECT TO INSPECT"}</small>
           </Card>
         ))}
       </div>
@@ -677,6 +687,8 @@ function Sstables() {
           </p>
         </Card>
       )}
+      {selectedName && detail?.error && <p className="stream-error">{detail.error}</p>}
+      {selectedName && detail?.manifest && <Card className="sstable-detail"><div className="detail-heading"><div><span className="eyebrow">TABLE INSPECTOR</span><h2>{detail.manifest.file}</h2><p>Generation {detail.manifest.generation} · level {detail.manifest.level}</p></div><span className="level-tag">{fmt(detail.table.records)} records</span></div><section className="manifest-inspector"><h3>Manifest entry</h3><code>{detail.manifest.generation} {detail.manifest.level.replace("L", "")} {detail.manifest.file}</code><p>The manifest maps a generation and level to this immutable data file. It lets the engine find the current table set after restart.</p></section><div className="table-detail-grid"><section className="detail-panel"><h3>Sparse index</h3><p>One anchor is stored for every {detail.sparseIndex.stride} sorted records. A lookup chooses the last anchor key ≤ your key, seeks to its byte offset, then scans at most {detail.sparseIndex.stride} records in that block.</p><div className="index-table"><div><b>Record #</b><b>Anchor key</b><b>Byte offset</b></div>{detail.sparseIndex.entries.map((entry) => <div key={`${entry.ordinal}-${entry.key}`}><span>{entry.ordinal}</span><code>{entry.key}</code><span>{fmt(entry.offset)}</span></div>)}</div></section><section className="detail-panel bloom-panel"><h3>Bloom filter</h3><p>The filter checks three bit positions before disk access. Any unset bit proves the key is absent from this table; all set bits mean “maybe,” so the sparse index still checks records.</p><div className="bloom-stats"><span>Bits<b>{fmt(detail.bloomFilter.bitCount)}</b></span><span>Set bits<b>{fmt(detail.bloomFilter.setBits)}</b></span><span>Hash checks<b>{detail.bloomFilter.hashCount}</b></span><span>Estimated false-positive rate<b>{(detail.bloomFilter.estimatedFalsePositiveRate * 100).toFixed(2)}%</b></span></div><div className="bloom-sample"><small>FIRST {detail.bloomFilter.sampleBits.length} BITS · 0 →</small><code>{detail.bloomFilter.sampleBits || "No bit sample"}</code></div></section></div><section className="detail-panel lookup-trace"><h3>Trace a key through this table</h3><form onSubmit={(event) => { event.preventDefault(); loadDetail(selectedName, searchKey); }}><input value={searchKey} onChange={(event) => setSearchKey(event.target.value)} placeholder="Enter a key to trace"/><button className="primary" disabled={detailBusy || !searchKey}>Trace lookup</button></form>{detailBusy && <p className="muted">Reading table metadata…</p>}{detailError && <p className="stream-error">{detailError}</p>}{detail.lookup && <div className="lookup-steps"><div><b>1 · Key range</b><span>{detail.lookup.inKeyRange ? "Key is within this file’s min/max range." : "Key is outside this file’s min/max range; skip this table."}</span></div><div><b>2 · Bloom checks</b>{!detail.lookup.inKeyRange && <span>Not checked: the key range already ruled out this file.</span>}{detail.lookup.bloomChecks.map((check, index) => <span key={index}>Bit {check.bit}: {check.set ? "set" : "unset"}{!check.set ? " — definitely absent" : ""}</span>)}<strong>{!detail.lookup.inKeyRange ? "Range check rejected this file before Bloom lookup" : detail.lookup.bloomSaysMaybe ? "Maybe present — continue to index" : "Definitely absent — no data block read"}</strong></div><div><b>3 · Sparse seek + scan</b><span>{detail.lookup.sparseAnchorKey ? `Start at “${detail.lookup.sparseAnchorKey}” (record ${detail.lookup.sparseAnchorOrdinal})` : "No earlier index anchor; start at the first indexed block"} · byte {fmt(detail.lookup.sparseAnchorOffset)}</span><span>{fmt(detail.lookup.recordsScanned)} records scanned</span><strong>{detail.lookup.recordFound ? detail.lookup.tombstone ? "Found a tombstone: this table marks the key deleted." : "Exact record found in this SSTable." : !detail.lookup.inKeyRange ? "No scan needed because the key is outside this file’s range." : detail.lookup.bloomSaysMaybe ? "No exact record in the scanned block (possible Bloom false positive or key in another table)." : "Index scan skipped after Bloom rejection."}</strong></div></div>}</section></Card>}
     </>
   );
 }
@@ -751,13 +763,13 @@ function SearchLab({ status: s }) {
 }
 function Compaction({ refresh }) {
   const [busy, setBusy] = useState(false),
-
-    [msg, setMsg] = useState("");
+    [msg, setMsg] = useState(""), [report, setReport] = useState(null);
   const run = async () => {
     setBusy(true);
     try {
       const x = await api("/api/compact", { method: "POST" });
       setMsg(`Compaction complete · ${x.tombstonesRemoved} tombstones removed`);
+      setReport(x);
       await refresh();
     } catch (e) {
       setMsg(e.message);
@@ -770,7 +782,7 @@ function Compaction({ refresh }) {
       <Title
         eyebrow="REAL LSM MAINTENANCE"
         title="Compaction lab"
-        desc="Flush the MemTable, rewrite sorted data, and apply tombstones."
+        desc="See exactly which immutable files were read, how versions were selected, and which files remain after the merge."
         action={
           <button className="primary" disabled={busy} onClick={run}>
             {busy ? <RefreshCw className="spin" /> : <Boxes size={15} />}{" "}
@@ -780,24 +792,24 @@ function Compaction({ refresh }) {
       />
       <Card className="compact-card">
         <Head
-          title="L0 → L1 merge"
-          sub="the operation creates immutable files and updates the local manifest"
+          title="What compaction does"
+          sub="Every input file is consumed. The highest sequence number wins for each key; winning deletes are discarded after all older copies are covered."
         />
         <div className="merge-flow">
           <div>
-            MemTable
+            Current MemTable
             <br />
             <b>mutable</b>
           </div>
           <span>→</span>
           <div>
-            L0 files
+            L0 + older levels
             <br />
             <b>merge + sort</b>
           </div>
           <span>→</span>
           <div className="output">
-            new SSTable
+            L1 output
             <br />
             <b>immutable</b>
           </div>
@@ -805,6 +817,14 @@ function Compaction({ refresh }) {
         <div className="result">
           {msg || "Ready. Run a workload or CRUD writes before compacting."}
         </div>
+        {report && <div className="compact-report">
+          <div className="compact-explanation"><b>Before → after</b><span>{report.memtableFlushed ? "The current MemTable was first flushed into a new L0 file. " : "The MemTable was empty. "}{report.rule}</span></div>
+          <div className="compact-columns">
+            <section><h3>Before · files consumed ({report.before.length})</h3>{report.before.length ? report.before.map(f => <div className="compact-file" key={f.name}><b>{f.level} · {f.name}</b><span>{fmt(f.records)} records · {fmt(f.bytes)} B</span><small>{f.minKey || "—"} → {f.maxKey || "—"}</small></div>) : <p className="empty">No SSTables existed.</p>}</section>
+            <section><h3>After · files kept ({report.after.length})</h3>{report.after.length ? report.after.map(f => <div className="compact-file output-file" key={f.name}><b>{f.level} · {f.name}</b><span>{fmt(f.records)} records · {fmt(f.bytes)} B</span><small>{f.minKey || "—"} → {f.maxKey || "—"}</small></div>) : <p className="empty">All records were deleted; no output table is needed.</p>}</section>
+          </div>
+          <p className="muted">Removed {fmt(report.tombstonesRemoved)} deleted keys. The local object mirror is updated with the same output file set.</p>
+        </div>}
       </Card>
     </>
   );
@@ -868,7 +888,7 @@ function Settings() {
         <Card>
           <Head
             title="Compaction strategy"
-            sub="manual compaction uses this policy"
+            sub="when L0 reaches this file count, the engine automatically compacts current levels"
           />
           <label className="field">
             COMPACTION POLICY
@@ -885,7 +905,7 @@ function Settings() {
             <b>What these control</b>
             <span>MemTable fills in memory before flush.</span>
             <span>WAL protects writes during a crash.</span>
-            <span>L0 trigger controls when you should compact manually.</span>
+            <span>L0 trigger starts automatic compaction after a flush reaches the configured file count.</span>
             <span>Block and Bloom settings tune read performance.</span>
           </div>
           <button className="primary" onClick={save}>
@@ -900,18 +920,33 @@ function Settings() {
 function Crash({ status: s, refresh }) {
   const [phase, setPhase] = useState("ready"),
     [before, setBefore] = useState(null),
-    [after, setAfter] = useState(null);
+    [after, setAfter] = useState(null),
+    [recovery, setRecovery] = useState(null),
+    [replayCursor, setReplayCursor] = useState(-1),
+    [error, setError] = useState("");
   const run = async () => {
     setBefore({ ...s });
+    setError("");
+    setRecovery(null); setAfter(null); setReplayCursor(-1);
     setPhase("crashing");
-    await new Promise((r) => setTimeout(r, 900));
     try {
-      await api("/api/crash", { method: "POST" });
+      const result = await api("/api/crash", { method: "POST" });
       const next = await api("/api/status");
+      setRecovery(result);
       setAfter(next);
+      setPhase("clearing");
+      await new Promise(resolve => setTimeout(resolve, 650));
+      setPhase("replaying");
+      const entries = result.replayLog || [];
+      const delay = Math.max(65, Math.min(220, 5000 / Math.max(entries.length, 1)));
+      for (let i = 0; i < entries.length; i++) {
+        setReplayCursor(i);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
       setPhase("recovered");
       refresh();
     } catch (e) {
+      setError(e.message);
       setPhase("error");
     }
   };
@@ -920,69 +955,70 @@ function Crash({ status: s, refresh }) {
       <Title
         eyebrow="FAILURE RECOVERY LAB"
         title="Crash simulation"
-        desc="See volatile memory disappear, then restore SSTables and replay the WAL tail."
+        desc="Watch the MemTable get cleared and rebuilt from the durable WAL tail. This simulates volatile-memory loss without terminating the backend process."
         action={
           <button
             className="danger"
-            disabled={phase === "crashing"}
+            disabled={["crashing", "clearing", "replaying"].includes(phase)}
             onClick={run}
           >
             <ShieldAlert size={15} />{" "}
-            {phase === "crashing" ? "System crashed…" : "Simulate crash"}
+            {["crashing", "clearing", "replaying"].includes(phase) ? "Recovering…" : "Simulate MemTable loss"}
           </button>
         }
       />
       <Card className="crash-card">
         <div className={"crash-timeline " + phase}>
-          <div>
+          <div className={phase === "ready" || phase === "crashing" ? "active" : "done"}>
             <b>1 · Running</b>
             <span>
-              MemTable has {before?.memtableKeys ?? s.memtableKeys} keys
+              {before?.memtableKeys ?? s.memtableKeys} volatile keys in MemTable
             </span>
           </div>
           <i>→</i>
-          <div>
-            <b>2 · Process lost</b>
-            <span>volatile MemTable cleared</span>
+          <div className={phase === "clearing" ? "active" : ["replaying", "recovered"].includes(phase) ? "done" : ""}>
+            <b>2 · Volatile state cleared</b>
+            <span>{recovery?.volatileKeysCleared ?? "—"} keys cleared from memory</span>
           </div>
           <i>→</i>
-          <div>
-            <b>3 · Restore durable state</b>
-            <span>SSTables restored + WAL tail replayed</span>
+          <div className={phase === "replaying" ? "active" : phase === "recovered" ? "done" : ""}>
+            <b>3 · Replay the WAL tail</b>
+            <span>{recovery?.walRecordsReplayed ?? "—"} durable WAL records replayed</span>
           </div>
           <i>→</i>
-          <div>
+          <div className={phase === "recovered" ? "active" : ""}>
             <b>4 · Recovered</b>
-            <span>{after?.memtableKeys ?? "—"} keys restored</span>
+            <span>{recovery?.memtableKeysRebuilt ?? after?.memtableKeys ?? "—"} unique keys rebuilt</span>
           </div>
         </div>
         <div className="crash-panels">
           <div>
-            <small>BEFORE CRASH</small>
+            <small>BEFORE SIMULATED LOSS</small>
             <strong>{before?.memtableKeys ?? s.memtableKeys}</strong>
-            <span>MemTable keys</span>
+            <span>volatile MemTable keys</span>
             <strong>{before?.walRecords ?? s.walRecords}</strong>
-            <span>WAL records pending replay</span>
+            <span>durable WAL records available</span>
+            <strong>{before?.sstables ?? s.sstables}</strong>
+            <span>SSTables already persisted</span>
           </div>
           <div>
-            <small>AFTER WAL RECOVERY</small>
-            <strong>{after?.memtableKeys ?? "—"}</strong>
-            <span>Durable keys restored</span>
-            <strong>{after ? after.walRecords : "—"}</strong>
-            <span>WAL tail applied</span>
+            <small>AFTER WAL REPLAY</small>
+            <strong>{recovery?.walRecordsReplayed ?? "—"}</strong>
+            <span>WAL records replayed in sequence</span>
+            <strong>{recovery?.memtableKeysRebuilt ?? "—"}</strong>
+            <span>unique MemTable keys rebuilt</span>
+            <strong>{recovery?.tombstonesRebuilt ?? "—"}</strong>
+            <span>delete markers replayed</span>
+            <strong>{recovery?.sstablesAlreadyOnDisk ?? after?.sstables ?? "—"}</strong>
+            <span>SSTables stayed on disk throughout</span>
           </div>
         </div>
-        {phase === "ready" && (
-          <p className="muted">
-            Create records in CRUD lab first, then press Simulate crash to watch
-            recovery.
-          </p>
-        )}
+        {phase === "ready" && <p className="muted">Create a few records with Manual operations, then simulate volatile loss. The backend pauses the stream, drops only the in-memory MemTable, and replays the WAL tail; SSTable files are not reloaded because the process remains running.</p>}
+        {phase !== "ready" && phase !== "error" && recovery && <div className="wal-replay"><div className="wal-replay-heading"><div><b>WAL replay animation</b><span>Records are applied in sequence; the latest operation for each key becomes its recovered state.</span></div><strong>{phase === "replaying" ? `${Math.max(replayCursor + 1, 0)} / ${recovery.replayLogTotal}` : `${recovery.walRecordsReplayed} / ${recovery.replayLogTotal}`}</strong></div><div className="wal-replay-list">{(recovery.replayLog || []).map((entry, i) => <div key={`${entry.sequence}-${i}`} className={i === replayCursor && phase === "replaying" ? "current" : i <= replayCursor || phase === "recovered" ? "replayed" : "pending"}><b>#{entry.sequence}</b><strong className={entry.operation === "DEL" ? "delete-op" : "put-op"}>{entry.operation}</strong><code>{entry.key}</code><span>{entry.operation === "DEL" ? "tombstone" : `${entry.valueBytes} value bytes`}</span></div>)}</div>{recovery.replayLogTruncated && <small className="replay-note">Showing the first {recovery.replayLog.length} records of {recovery.replayLogTotal}. The backend replayed the full WAL.</small>}{phase === "replaying" && <p className="replay-caption">Applying record {replayCursor + 1} of {recovery.replayLogTotal} to the MemTable…</p>}{phase === "clearing" && <p className="replay-caption">Volatile keys cleared. Preparing the durable WAL records for replay…</p>}</div>}
         {phase === "recovered" && (
-          <p className="result">
-            Recovery complete. Persisted SSTables were restored and the remaining WAL tail was replayed.
-          </p>
+          <><p className="result">Recovery complete: the MemTable was rebuilt from {fmt(recovery?.walRecordsReplayed)} WAL records. SSTables remained available on disk and were not part of this replay.</p><Card className="recovery-entries"><Head title="Entries reconstructed from the WAL" sub="latest state per key; tombstones remain visible"/><DataTable rows={recovery?.replayedEntries || []} empty="The WAL tail was empty, so there were no MemTable entries to rebuild."/></Card></>
         )}
+        {phase === "error" && <p className="stream-error">Recovery failed: {error}</p>}
       </Card>
     </>
   );

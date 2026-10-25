@@ -72,3 +72,16 @@ std::vector<std::pair<std::string, Record>> SkipListMemTable::snapshot(size_t li
   for (Node* node = head->next[0]; node && (!limit || result.size() < limit); node = node->next[0]) result.emplace_back(node->key, node->record);
   return result;
 }
+size_t SkipListMemTable::levels() const {
+  for (size_t level = maxHeight; level-- > 0;) {
+    if (head->next[level]) return level + 1;
+  }
+  return 1;
+}
+std::vector<std::pair<std::string, size_t>> SkipListMemTable::structure(size_t limit) const {
+  std::vector<std::pair<std::string, size_t>> result;
+  for (Node* node = head->next[0]; node && result.size() < limit; node = node->next[0]) {
+    result.emplace_back(node->key, node->next.size());
+  }
+  return result;
+}

@@ -31,6 +31,7 @@ public:
   void clear();
   size_t size() const { return currentSize; }
   size_t bytes() const { return currentBytes; }
-  size_t levels() const { return maxHeight; }
+  size_t levels() const;
   std::vector<std::pair<std::string, Record>> snapshot(size_t limit = 0) const;
+  std::vector<std::pair<std::string, size_t>> structure(size_t limit = 40) const;
 };
